@@ -493,68 +493,87 @@ class PostingEngine:
     
     def _collect_groups_from_profile(self, driver: Chrome, max_groups: int = 100) -> list:
         """
-        Collect group URLs from the user's "Your Groups" page.
-        Only collects direct group URLs like:
-        https://www.facebook.com/groups/123456789/
-        NOT group/feed/, group/joins/ etc.
+        Collect group URLs from the user's Facebook groups.
+        Uses specific URLs:
+        1. https://www.facebook.com/groups/?category=membership
+        2. https://www.facebook.com/groups/joins/
+        
+        Collects only direct group URLs: facebook.com/groups/NUMBER/
+        NOT feed, joins, search etc.
         """
         group_urls = []
         
         try:
-            # Scroll a few times to load more groups
-            for scroll in range(10):
-                # Collect all links on page
-                links = driver.find_elements(By.TAG_NAME, "a")
-                
-                for link in links:
-                    try:
-                        href = link.get_attribute("href")
-                        if not href:
-                            continue
-                        
-                        # Must be a group URL
-                        if not href.startswith("https://www.facebook.com/groups/"):
-                            continue
-                        
-                        # Extract the part after /groups/
-                        rest = href.replace("https://www.facebook.com/groups/", "")
-                        
-                        # Direct group URL is facebook.com/groups/NUMBER/ or facebook.com/groups/NUMBER
-                        # Exclude feed, joins, search, discover etc.
-                        excluded = ['feed', 'joins', 'search', 'discover', 'manage', 
-                                    'create', 'saved', 'invite', 'requests', 'pending']
-                        
-                        # Get first path segment
-                        group_id = rest.split('/')[0]
-                        
-                        if not group_id or group_id in excluded:
-                            continue
-                        
-                        # Clean URL - remove query params, keep just the group
-                        clean_url = f"https://www.facebook.com/groups/{group_id}/"
-                        
-                        if clean_url not in group_urls:
-                            group_urls.append(clean_url)
-                    except:
-                        pass
-                
+            # Try multiple URLs to find the groups list
+            urls_to_try = [
+                "https://www.facebook.com/groups/?category=membership",
+                "https://www.facebook.com/groups/joins/?nav_source=tab&ordering=viewer_added",
+            ]
+            
+            for target_url in urls_to_try:
                 if len(group_urls) >= max_groups:
                     break
+                    
+                logger.info(f"Navigating to: {target_url}")
+                driver.get(target_url)
+                time.sleep(random.uniform(4.0, 6.0))
                 
-                # Scroll inside the main FB content area (not just body)
-                driver.execute_script("""
-                    const main = document.querySelector('[role="main"]');
-                    if (main) main.scrollTo(0, main.scrollHeight);
-                    else window.scrollTo(0, document.body.scrollHeight);
-                """)
-                time.sleep(random.uniform(1.5, 2.5))
+                current = driver.current_url.lower()
+                if "checkpoint" in current:
+                    return []
+                if "login" in current:
+                    return []
+                
+                logger.info(f"Current URL: {current}")
+                
+                # Scroll and collect
+                seen_ids = set()
+                for scroll in range(15):
+                    # Find ALL links on the page
+                    links = driver.find_elements(By.TAG_NAME, "a")
+                    
+                    for link in links:
+                        try:
+                            href = link.get_attribute("href")
+                            if not href:
+                                continue
+                            if not href.startswith("https://www.facebook.com/groups/"):
+                                continue
+                            
+                            rest = href.replace("https://www.facebook.com/groups/", "").split('?')[0].split('/')[0]
+                            
+                            excluded = ['feed', 'joins', 'search', 'discover', 'manage',
+                                       'create', 'saved', 'invite', 'requests', 'pending',
+                                       'member', 'members', 'about', 'photos', 'videos',
+                                       'files', 'events', 'topics']
+                            
+                            if rest and rest not in excluded and not rest.startswith('?') and not rest.startswith('#'):
+                                if rest not in seen_ids:
+                                    seen_ids.add(rest)
+                                    clean_url = f"https://www.facebook.com/groups/{rest}/"
+                                    group_urls.append(clean_url)
+                        except:
+                            pass
+                    
+                    if len(group_urls) >= max_groups:
+                        break
+                    
+                    # Scroll
+                    driver.execute_script("""
+                        const main = document.querySelector('[role="main"]');
+                        if (main) main.scrollTo(0, main.scrollHeight);
+                        else window.scrollTo(0, document.body.scrollHeight);
+                    """)
+                    time.sleep(random.uniform(2.0, 3.0))
             
-            logger.info(f"📋 Collected {len(group_urls)} clean group URLs")
+            logger.info(f"📋 Collected {len(group_urls)} group URLs from profile")
             
         except Exception as e:
-            logger.error(f"Error collecting groups from profile: {e}")
+            logger.error(f"Error collecting groups: {e}")
         
-        return group_urls[:max_groups]
+        # Deduplicate and limit
+        unique = list(dict.fromkeys(group_urls))
+        return unique[:max_groups]
     
     def run_posting_from_profile(self, account_id: int, vacancy_id: int,
                                   max_posts: int = 30,
@@ -601,39 +620,7 @@ class PostingEngine:
         }
         
         try:
-            # Step 1: Navigate to Groups feed (Facebook might redirect from joins URL)
-            logger.info("📋 Navigating to groups page...")
-            driver.get("https://www.facebook.com/groups/feed/")
-            
-            # Wait for page to settle
-            time.sleep(random.uniform(3.0, 5.0))
-            
-            # Check if we're on groups feed or got redirected to login
-            current_url = driver.current_url.lower()
-            if "login" in current_url:
-                return {"status": "error", "message": "Not logged in - Facebook login page detected"}
-            
-            # Try to click "Your Groups" or "Мои группы" in the left sidebar
-            try:
-                your_groups_btn = driver.find_element(By.XPATH,
-                    "//span[contains(text(), 'Мои группы') or contains(text(), 'Your Groups') or contains(text(), 'Мої групи') or contains(text(), 'Ваши группы') or contains(text(), 'Всі групи')]"
-                )
-                your_groups_btn.click()
-                time.sleep(random.uniform(2.0, 3.0))
-                logger.info("Clicked 'Your Groups' link in sidebar")
-            except:
-                # Fallback: try direct URL
-                logger.info("Could not find 'Your Groups' button, trying direct URL")
-                driver.get("https://www.facebook.com/groups/joins/?nav_source=tab&ordering=viewer_added")
-                time.sleep(random.uniform(3.0, 5.0))
-            
-            # Check if we're on the groups list
-            if "joins" in driver.current_url.lower() or "feed" in driver.current_url.lower():
-                logger.info(f"✅ On groups page: {driver.current_url}")
-            else:
-                logger.warning(f"Unexpected URL after navigation: {driver.current_url}")
-            
-            # Step 2: Collect groups from the My Groups page
+            # Step 1: Collect groups from profile
             logger.info("🔍 Collecting groups from profile...")
             group_urls = self._collect_groups_from_profile(driver, max_groups=max_posts)
             
