@@ -190,6 +190,48 @@ async def add_vacancy(
     return RedirectResponse("/vacancies", status_code=303)
 
 
+@app.get("/vacancies/{vacancy_id}/edit", response_class=HTMLResponse)
+def edit_vacancy_form(request: Request, vacancy_id: int):
+    """Show edit form for a vacancy"""
+    db = get_db()
+    vacancy = db.query(Vacancy).filter(Vacancy.id == vacancy_id).first()
+    db.close()
+    if not vacancy:
+        return RedirectResponse("/vacancies", status_code=303)
+    return templates.TemplateResponse("vacancy_edit.html", {
+        "request": request,
+        "vacancy": vacancy,
+    })
+
+
+@app.post("/vacancies/{vacancy_id}/edit")
+async def edit_vacancy(
+    vacancy_id: int,
+    title: str = Form(""),
+    description: str = Form(""),
+    photo: UploadFile = File(None),
+):
+    db = get_db()
+    vacancy = db.query(Vacancy).filter(Vacancy.id == vacancy_id).first()
+    if vacancy:
+        vacancy.title = title
+        vacancy.description = description
+        vacancy.updated_at = datetime.utcnow()
+        
+        if photo and photo.filename:
+            ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+            safe_filename = f"{ts}_{photo.filename}"
+            file_path = UPLOADS_DIR / safe_filename
+            content = await photo.read()
+            with open(file_path, "wb") as f:
+                f.write(content)
+            vacancy.photo_path = str(file_path)
+        
+        db.commit()
+    db.close()
+    return RedirectResponse("/vacancies", status_code=303)
+
+
 @app.get("/vacancies/{vacancy_id}/delete")
 def delete_vacancy(vacancy_id: int):
     db = get_db()

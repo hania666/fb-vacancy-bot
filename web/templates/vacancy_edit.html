@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Редактировать вакансию #{{ vacancy.id }} — FB Vacancy Bot</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
+        .nav { background: #1e293b; padding: 16px 24px; display: flex; gap: 24px; align-items: center; border-bottom: 1px solid #334155; }
+        .nav a { color: #94a3b8; text-decoration: none; font-size: 14px; font-weight: 500; padding: 8px 12px; border-radius: 6px; transition: all 0.2s; }
+        .nav a:hover { color: #fff; background: #334155; }
+        .nav .title { color: #fff; font-size: 18px; font-weight: 700; margin-right: auto; }
+        .container { max-width: 800px; margin: 0 auto; padding: 32px 24px; }
+        .btn { display: inline-block; padding: 10px 20px; border-radius: 8px; font-size: 14px; font-weight: 500; text-decoration: none; cursor: pointer; border: none; transition: all 0.2s; }
+        .btn-primary { background: #3b82f6; color: #fff; }
+        .btn-primary:hover { background: #2563eb; }
+        .btn-secondary { background: #475569; color: #fff; }
+        .btn-secondary:hover { background: #64748b; }
+        form { background: #1e293b; border-radius: 12px; padding: 32px; border: 1px solid #334155; display: flex; flex-direction: column; gap: 16px; }
+        form h2 { color: #f1f5f9; margin-bottom: 8px; font-size: 22px; }
+        form label { color: #94a3b8; font-size: 13px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px; }
+        form input, form textarea { background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 12px 16px; color: #e2e8f0; font-size: 14px; width: 100%; }
+        form textarea { min-height: 300px; font-family: inherit; line-height: 1.5; }
+        form input:focus, form textarea:focus { outline: none; border-color: #3b82f6; }
+        form input[type="file"] { background: none; border: 1px dashed #334155; padding: 24px; text-align: center; cursor: pointer; }
+        .preview { background: #0f172a; border-radius: 8px; padding: 16px; max-height: 200px; overflow-y: auto; font-size: 13px; color: #64748b; white-space: pre-wrap; border: 1px solid #1e293b; }
+        .actions { display: flex; gap: 12px; margin-top: 8px; }
+        .text-muted { color: #64748b; font-size: 13px; }
+        .vacancy-id { color: #64748b; font-size: 14px; margin-bottom: 4px; }
+        img.photo-preview { max-width: 100%; max-height: 200px; border-radius: 8px; margin-top: 8px; }
+        .char-counter { text-align: right; font-size: 12px; color: #64748b; margin-top: 4px; }
+    </style>
+</head>
+<body>
+    <nav class="nav">
+        <span class="title">📦 FB Vacancy Bot</span>
+        <a href="/">Главная</a>
+        <a href="/accounts">Аккаунты</a>
+        <a href="/groups">Группы</a>
+        <a href="/vacancies">Вакансии</a>
+        <a href="/stats">Статистика</a>
+    </nav>
+    <div class="container">
+        <form action="/vacancies/{{ vacancy.id }}/edit" method="post" enctype="multipart/form-data">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+                <h2>✏️ Редактирование вакансии</h2>
+                <span class="vacancy-id">ID: {{ vacancy.id }}</span>
+            </div>
+            
+            <div>
+                <label for="title">Название</label>
+                <input type="text" name="title" id="title" value="{{ vacancy.title or '' }}" placeholder="Например: Склад брендового одягу (Psary)">
+            </div>
+            
+            <div>
+                <label for="description">Текст вакансии</label>
+                <textarea name="description" id="description" placeholder="🔥 Склад брендового одягу (Psary)&#10;📍 Локація: Psary...">{{ vacancy.description }}</textarea>
+                <div class="char-counter"><span id="char-count">{{ vacancy.description|length }}</span> символов</div>
+            </div>
+            
+            <div>
+                <label>Текущее фото</label>
+                {% if vacancy.photo_path %}
+                <div style="margin-bottom:8px;">
+                    <img src="/{{ vacancy.photo_path }}" class="photo-preview" onerror="this.style.display='none'">
+                    <div class="text-muted" style="margin-top:4px;">{{ vacancy.photo_path.split('/')[-1] }}</div>
+                </div>
+                {% else %}
+                <div class="text-muted" style="margin-bottom:8px;">Нет фото</div>
+                {% endif %}
+                <label for="photo">Заменить фото (оставьте пустым чтобы не менять)</label>
+                <input type="file" name="photo" id="photo" accept="image/*">
+            </div>
+            
+            <div>
+                <label>Предпросмотр</label>
+                <div class="preview" id="preview">{{ vacancy.description }}</div>
+            </div>
+            
+            <div class="actions">
+                <button type="submit" class="btn btn-primary">💾 Сохранить</button>
+                <a href="/vacancies" class="btn btn-secondary">← Назад</a>
+            </div>
+        </form>
+    </div>
+    
+    <script>
+        // Live character counter
+        const desc = document.getElementById('description');
+        const counter = document.getElementById('char-count');
+        const preview = document.getElementById('preview');
+        
+        desc.addEventListener('input', function() {
+            counter.textContent = this.value.length;
+            preview.textContent = this.value;
+        });
+    </script>
+</body>
+</html>

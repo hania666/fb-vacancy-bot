@@ -73,8 +73,8 @@
                     <img src="/{{ v.photo_path }}" class="photo-preview">
                     {% endif %}
                     <div style="margin-top: 12px;">
+                        <a href="/vacancies/{{ v.id }}/edit" class="btn btn-primary btn-sm">✏️ Редактировать</a>
                         <a href="/vacancies/{{ v.id }}/delete" class="btn btn-danger btn-sm" onclick="return confirm('Удалить вакансию #{{ v.id }}?')">🗑 Удалить</a>
-                        <button class="btn btn-primary btn-sm" onclick="alert('Редактирование будет в следующей версии')">✏️ Редактировать</button>
                     </div>
                 </div>
             </div>
