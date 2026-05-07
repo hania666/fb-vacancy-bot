@@ -56,7 +56,7 @@ class IXBrowserClient:
                      load_profile_info_page: bool = False) -> Optional[dict]:
         """Open a profile. Returns dict with webdriver/debugging_address."""
         data = self._client.open_profile(
-            profile_id=str(profile_id),
+            profile_id=int(profile_id),
             cookies_backup=cookies_backup,
             load_profile_info_page=load_profile_info_page,
         )
@@ -66,14 +66,14 @@ class IXBrowserClient:
 
     def close_profile(self, profile_id) -> bool:
         """Close a profile"""
-        data = self._client.close_profile(str(profile_id))
+        data = self._client.close_profile(int(profile_id))
         self.code = self._client.code
         self.message = self._client.message
         return data is not None
 
     def delete_profile(self, profile_id) -> bool:
         """Delete a profile"""
-        data = self._client.delete_profile(str(profile_id))
+        data = self._client.delete_profile(int(profile_id))
         self.code = self._client.code
         self.message = self._client.message
         return data is not None
@@ -82,14 +82,14 @@ class IXBrowserClient:
 
     def get_cookies(self, profile_id) -> Optional[list]:
         """Get cookies from an open profile"""
-        data = self._client.get_profile_cookie(str(profile_id))
+        data = self._client.get_profile_cookie(int(profile_id))
         self.code = self._client.code
         self.message = self._client.message
         return data
 
     def set_cookies(self, profile_id, cookies: list) -> bool:
         """Set cookies for a profile"""
-        data = self._client.update_profile_cookie(str(profile_id), cookies)
+        data = self._client.update_profile_cookie(int(profile_id), cookies)
         self.code = self._client.code
         self.message = self._client.message
         return data is not None
