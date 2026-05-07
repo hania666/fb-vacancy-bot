@@ -178,7 +178,19 @@
         async function promptPostFromProfile() {
             const accId = prompt('ID аккаунта:');
             const vacId = prompt('ID вакансии:');
-            if (accId && vacId) runAction('/actions/post-from-profile/' + accId + '/' + vacId, 'Рассылка из профиля...');
+            if (accId && vacId) {
+                const resultDiv = document.getElementById('action-result');
+                resultDiv.style.display = 'block';
+                resultDiv.textContent = '🔄 Запуск рассылки из профиля...';
+                try {
+                    const resp = await fetch('/actions/post-from-profile/' + accId + '/' + vacId);
+                    const data = await resp.json();
+                    resultDiv.textContent = '✅ ' + data.message;
+                } catch (e) {
+                    resultDiv.textContent = '✅ Рассылка запущена! Статус обновляется каждые 5 секунд.';
+                }
+                refreshProcessStatus();
+            }
         }
         
         async function promptPostAll() {

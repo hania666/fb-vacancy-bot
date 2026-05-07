@@ -499,16 +499,35 @@ def action_post_from_profile(account_id: int, vacancy_id: int):
     Post to all groups where the account is a member,
     WITHOUT needing groups in the database.
     
-    Goes to facebook.com/groups/joins/, collects groups automatically.
+    Runs in background - check status at /actions/status
     """
     try:
-        engine = PostingEngine()
-        result = engine.run_posting_from_profile(
-            account_id=account_id,
-            vacancy_id=vacancy_id,
-            max_posts=30,
+        # Generate unique process ID
+        pid = f"post_profile_{account_id}_{vacancy_id}_{int(datetime.utcnow().timestamp())}"
+        
+        def run_in_background():
+            """Run posting in background thread"""
+            from core.posting_engine import PostingEngine
+            engine = PostingEngine()
+            result = engine.run_posting_from_profile(
+                account_id=account_id,
+                vacancy_id=vacancy_id,
+                max_posts=30,
+            )
+            return result
+        
+        pm = ProcessManager()
+        pm.start_process(
+            pid=pid,
+            description=f"Постинг из профиля: акк #{account_id}, вакансия #{vacancy_id}",
+            target=run_in_background,
         )
-        return JSONResponse(result)
+        
+        return JSONResponse({
+            "status": "started",
+            "message": f"Рассылка запущена в фоне. Следи за статусом на главной.",
+            "process_id": pid,
+        })
     except Exception as e:
         logger.error(f"Post from profile error: {e}")
         return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
