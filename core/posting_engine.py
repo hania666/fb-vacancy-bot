@@ -4,6 +4,7 @@
 import os
 import time
 import random
+import threading
 import logging
 from datetime import datetime, timedelta
 from typing import Optional, List
@@ -292,7 +293,8 @@ class PostingEngine:
     def run_posting_round(self, account_id: int, vacancy_id: int,
                           groups_per_batch: int = 10,
                           batches: int = 10,
-                          profile_id: str = None) -> dict:
+                          profile_id: str = None,
+                          stop_flag: threading.Event = None) -> dict:
         """
         Run a full posting round for one account.
         
@@ -346,6 +348,9 @@ class PostingEngine:
             db.close()
             
             for batch_idx in range(batches):
+                if stop_flag and stop_flag.is_set():
+                    logger.info("⏹ Stop requested, ending posting round")
+                    break
                 db = SessionLocal()
                 if not self._check_daily_limit(db, account_id):
                     results["limit_reached"] = 1
@@ -411,8 +416,11 @@ class PostingEngine:
                     
                     delay = random.randint(self.MIN_DELAY_BETWEEN_POSTS, self.MAX_DELAY_BETWEEN_POSTS)
                     logger.info(f"⏳ Waiting {delay}s before next post...")
-                    time.sleep(delay)
-                
+                    for s_ in range(delay):
+                        if stop_flag and stop_flag.is_set():
+                            logger.info("⏹ Stop during delay")
+                            break
+                        time.sleep(1)
                 results["total_batches"] += 1
                 
                 if batch_idx < batches - 1:
@@ -433,7 +441,8 @@ class PostingEngine:
         
         return results
     
-    def run_multiple_accounts_with_vacancies(self, assignments: list) -> dict:
+    def run_multiple_accounts_with_vacancies(self, assignments: list,
+                                              stop_flag: threading.Event = None) -> dict:
         """
         Run multiple accounts, each with its own vacancy.
         
@@ -443,6 +452,9 @@ class PostingEngine:
         """
         all_results = []
         for assignment in assignments:
+            if stop_flag and stop_flag.is_set():
+                logger.info("⏹ Stop requested between accounts")
+                break
             account_id = assignment["account_id"]
             vacancy_id = assignment["vacancy_id"]
             groups_per_batch = assignment.get("groups_per_batch", 10)
@@ -463,6 +475,7 @@ class PostingEngine:
                 vacancy_id=vacancy_id,
                 groups_per_batch=groups_per_batch,
                 batches=batches,
+                stop_flag=stop_flag,
             )
             
             all_results.append({
@@ -478,7 +491,8 @@ class PostingEngine:
         
         return {"all_accounts": all_results}
     
-    def run_all_accounts(self, vacancy_id: int) -> dict:
+    def run_all_accounts(self, vacancy_id: int,
+                         stop_flag: threading.Event = None) -> dict:
         """Run posting for all 'ready' accounts with the same vacancy"""
         db = SessionLocal()
         accounts = db.query(Account).filter(Account.status == "ready").all()
@@ -577,7 +591,8 @@ class PostingEngine:
     
     def run_posting_from_profile(self, account_id: int, vacancy_id: int,
                                   max_posts: int = 30,
-                                  profile_id: str = None) -> dict:
+                                  profile_id: str = None,
+                                  stop_flag: threading.Event = None) -> dict:
         """
         Post to groups directly from the account's existing groups on Facebook,
         WITHOUT needing groups in the database.
@@ -631,6 +646,9 @@ class PostingEngine:
             
             # Step 2: Post to each group
             for idx, group_url in enumerate(group_urls):
+                if stop_flag and stop_flag.is_set():
+                    logger.info("⏹ Stop requested, ending profile posting")
+                    break
                 if results["successful"] >= max_posts:
                     logger.info(f"✅ Reached max_posts limit ({max_posts})")
                     break
@@ -676,7 +694,11 @@ class PostingEngine:
                 if idx < len(group_urls) - 1:
                     delay = random.randint(self.MIN_DELAY_BETWEEN_POSTS, self.MAX_DELAY_BETWEEN_POSTS)
                     logger.info(f"⏳ Waiting {delay}s before next post...")
-                    time.sleep(delay)
+                    for s_ in range(delay):
+                        if stop_flag and stop_flag.is_set():
+                            logger.info("⏹ Stop during delay")
+                            break
+                        time.sleep(1)
             
             logger.info(f"✅ Done! {results['successful']} successful, {results['failed']} failed")
             

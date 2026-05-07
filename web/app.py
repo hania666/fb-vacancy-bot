@@ -488,6 +488,7 @@ def action_post(account_id: int, vacancy_id: int):
                 vacancy_id=vacancy_id,
                 groups_per_batch=10,
                 batches=10,
+                stop_flag=kwargs.get('stop_flag'),
             )
         
         proc = pm.start(
@@ -511,7 +512,10 @@ def action_post_all(vacancy_id: int):
     try:
         def run(**kwargs):
             engine = PostingEngine()
-            engine.run_all_accounts(vacancy_id=vacancy_id)
+            engine.run_all_accounts(
+                vacancy_id=vacancy_id,
+                stop_flag=kwargs.get('stop_flag'),
+            )
         
         proc = pm.start(
             description=f"📨 Рассылка со всех акков, вакансия #{vacancy_id}",
@@ -569,13 +573,13 @@ def action_post_from_profile(account_id: int, vacancy_id: int):
                     "message": f"Рассылка для акк #{account_id} уже запущена!",
                 })
         
-        def run_in_background(driver_to_use=None):
-            """Run posting in background"""
+        def run_in_background(**kwargs):
             engine = PostingEngine()
             result = engine.run_posting_from_profile(
                 account_id=account_id,
                 vacancy_id=vacancy_id,
                 max_posts=30,
+                stop_flag=kwargs.get('stop_flag'),
             )
             return result
         
