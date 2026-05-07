@@ -12,24 +12,44 @@
         .nav a:hover { color: #fff; background: #334155; }
         .nav a.active { color: #3b82f6; background: #1e3a5f; }
         .nav .title { color: #fff; font-size: 18px; font-weight: 700; margin-right: auto; }
-        .container { max-width: 1200px; margin: 0 auto; padding: 32px 24px; }
-        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 16px; margin-bottom: 32px; }
+        .container { max-width: 1100px; margin: 0 auto; padding: 32px 24px; }
+        h2 { margin-bottom: 20px; font-size: 24px; color: #f1f5f9; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 24px; }
         .card { background: #1e293b; border-radius: 12px; padding: 24px; border: 1px solid #334155; }
         .card .label { font-size: 12px; text-transform: uppercase; color: #64748b; letter-spacing: 0.5px; margin-bottom: 8px; }
         .card .value { font-size: 28px; font-weight: 700; }
         .card .value.green { color: #22c55e; }
         .card .value.red { color: #ef4444; }
         .card .value.yellow { color: #eab308; }
+        .card .value.blue { color: #3b82f6; }
+        .card .sub { font-size: 12px; color: #64748b; margin-top: 4px; }
         table { width: 100%; border-collapse: collapse; background: #1e293b; border-radius: 12px; overflow: hidden; }
-        th, td { padding: 12px 16px; text-align: left; border-bottom: 1px solid #334155; font-size: 14px; }
+        th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid #334155; font-size: 13px; }
         th { background: #0f172a; color: #64748b; font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; }
         td { color: #cbd5e1; }
         tr:hover td { background: #253347; }
-        h2 { margin-bottom: 20px; font-size: 24px; color: #f1f5f9; }
-        .status { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; }
-        .status.success { background: #052e16; color: #4ade80; }
-        .status.failed { background: #450a0a; color: #f87171; }
-        .status.banned { background: #422006; color: #fbbf24; }
+        .btn { display: inline-block; padding: 8px 16px; border-radius: 8px; font-size: 14px; font-weight: 500; text-decoration: none; cursor: pointer; border: none; transition: all 0.2s; }
+        .btn-primary { background: #3b82f6; color: #fff; }
+        .btn-primary:hover { background: #2563eb; }
+        .btn-success { background: #22c55e; color: #fff; }
+        .btn-success:hover { background: #16a34a; }
+        .btn-warning { background: #eab308; color: #000; }
+        .btn-warning:hover { background: #ca8a04; }
+        .btn-sm { padding: 4px 10px; font-size: 12px; }
+        .status { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+        .status.ready { background: #052e16; color: #4ade80; }
+        .status.warming { background: #422006; color: #fbbf24; }
+        .status.banned { background: #450a0a; color: #f87171; }
+        .status.new { background: #1e3a5f; color: #60a5fa; }
+        .status.paused { background: #1e293b; color: #94a3b8; }
+        .section { background: #1e293b; border-radius: 12px; padding: 24px; border: 1px solid #334155; margin-bottom: 20px; }
+        .section h3 { color: #f1f5f9; margin-bottom: 16px; font-size: 16px; display: flex; align-items: center; gap: 8px; }
+        .bar-chart { display: flex; gap: 6px; align-items: end; height: 60px; margin-top: 12px; }
+        .bar { width: 30px; background: #3b82f6; border-radius: 4px 4px 0 0; min-height: 4px; transition: height 0.3s; position: relative; }
+        .bar-label { position: absolute; bottom: -18px; left: 50%; transform: translateX(-50%); font-size: 10px; color: #64748b; white-space: nowrap; }
+        .text-muted { color: #64748b; font-size: 13px; }
+        .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+        .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; background: #334155; color: #94a3b8; }
     </style>
 </head>
 <body>
@@ -39,44 +59,177 @@
         <a href="/accounts">Аккаунты</a>
         <a href="/groups">Группы</a>
         <a href="/vacancies">Вакансии</a>
-        <a href="/stats" class="active">Статистика</a>
+        <a href="/scheduler">⏰ Расписание</a>
+        <a href="/stats" class="active">📊 Статистика</a>
     </nav>
     <div class="container">
         <h2>📊 Статистика</h2>
-        <div class="grid">
-            <div class="card">
-                <div class="label">Успешно</div>
-                <div class="value green">{{ success }}</div>
-            </div>
-            <div class="card">
-                <div class="label">Ошибок</div>
-                <div class="value red">{{ failed }}</div>
-            </div>
-            <div class="card">
-                <div class="label">Банов</div>
-                <div class="value yellow">{{ banned }}</div>
-            </div>
+
+        <!-- Overall cards -->
+        <div class="grid" id="overall-cards">
+            <div class="card"><div class="label">Всего постов</div><div class="value blue">—</div></div>
+            <div class="card"><div class="label">Успешно</div><div class="value green">—</div></div>
+            <div class="card"><div class="label">Ошибок</div><div class="value red">—</div></div>
+            <div class="card"><div class="label">Конверсия</div><div class="value">—</div><div class="sub">успех / всего</div></div>
+            <div class="card"><div class="label">Сегодня</div><div class="value green">—</div><div class="sub">успешно / ошибок</div></div>
         </div>
 
-        <table>
-            <thead>
-                <tr><th>ID</th><th>Аккаунт</th><th>Группа</th><th>Статус</th><th>Время</th><th>Ошибка</th></tr>
-            </thead>
-            <tbody>
-                {% for log in logs %}
-                <tr>
-                    <td>{{ log.id }}</td>
-                    <td class="text-muted">#{{ log.account_id }}</td>
-                    <td class="text-muted">{{ log.group_url[:40] ~ '...' if log.group_url|length > 40 else log.group_url }}</td>
-                    <td><span class="status {{ log.status }}">{{ log.status }}</span></td>
-                    <td class="text-muted">{{ log.posted_at.strftime('%d.%m.%Y %H:%M') }}</td>
-                    <td class="text-muted">{{ log.error_message[:50] if log.error_message else '—' }}</td>
-                </tr>
-                {% else %}
-                <tr><td colspan="6" style="text-align:center; color:#64748b; padding:32px;">Пока нет логов рассылки.</td></tr>
-                {% endfor %}
-            </tbody>
-        </table>
+        <!-- 7 days chart -->
+        <div class="section">
+            <h3>📈 7 дней</h3>
+            <div class="bar-chart" id="week-chart"></div>
+        </div>
+
+        <!-- By account -->
+        <div class="section">
+            <h3>👤 По аккаунтам</h3>
+            <table>
+                <thead>
+                    <tr><th>Аккаунт</th><th>Статус</th><th>Успешно</th><th>Ошибок</th><th>Конверсия</th><th>Всего постов</th><th>За сегодня</th></tr>
+                </thead>
+                <tbody id="accounts-table">
+                    <tr><td colspan="7" style="text-align:center;color:#64748b;">Загрузка...</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Active vacancies -->
+        <div class="section">
+            <h3>🔥 Активные вакансии</h3>
+            <table>
+                <thead>
+                    <tr><th>ID</th><th>Название</th><th>Постов</th><th>Групп</th></tr>
+                </thead>
+                <tbody id="vacancies-table">
+                    <tr><td colspan="4" style="text-align:center;color:#64748b;">Нет активных вакансий</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Balance section -->
+        <div class="section">
+            <h3>⚖️ Балансировка</h3>
+            <div class="row" style="margin-bottom:12px;">
+                <button class="btn btn-warning" onclick="refreshBalance()">🔄 Проверить баланс</button>
+                <button class="btn btn-success" onclick="rebalance()">⚡ Ребаланс</button>
+                <span id="balance-summary" class="text-muted"></span>
+            </div>
+            <table>
+                <thead>
+                    <tr><th>Аккаунт</th><th>Групп обработано</th><th>Постов сегодня</th><th>Нагрузка</th></tr>
+                </thead>
+                <tbody id="balance-table">
+                    <tr><td colspan="4" style="text-align:center;color:#64748b;">Нажми "Проверить баланс"</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Logs -->
+        <div class="section">
+            <h3>📋 Последние логи</h3>
+            <table>
+                <thead>
+                    <tr><th>ID</th><th>Акк</th><th>Группа</th><th>Статус</th><th>Время</th><th>Ошибка</th></tr>
+                </thead>
+                <tbody id="logs-table">
+                    <tr><td colspan="6" style="text-align:center;color:#64748b;">Загрузка...</td></tr>
+                </tbody>
+            </table>
+        </div>
     </div>
+
+    <script>
+        async function refreshStats() {
+            const resp = await fetch('/api/stats');
+            const d = await resp.json();
+
+            // Cards
+            const cards = document.getElementById('overall-cards');
+            cards.innerHTML = `
+                <div class="card"><div class="label">Всего постов</div><div class="value blue">${d.total_posts}</div></div>
+                <div class="card"><div class="label">Успешно</div><div class="value green">${d.success}</div></div>
+                <div class="card"><div class="label">Ошибок</div><div class="value red">${d.failed}</div><div class="sub">банов: ${d.banned}</div></div>
+                <div class="card"><div class="label">Конверсия</div><div class="value ${d.conversion > 80 ? 'green' : d.conversion > 50 ? 'yellow' : 'red'}">${d.conversion}%</div></div>
+                <div class="card"><div class="label">Сегодня</div><div class="value green">${d.today_success}</div><div class="sub">❌ ${d.today_failed}</div></div>
+            `;
+
+            // Week chart
+            const chart = document.getElementById('week-chart');
+            const maxCount = Math.max(...d.days.map(x => x.count), 1);
+            chart.innerHTML = d.days.map(day => `
+                <div class="bar" style="height:${Math.max(4, (day.count / maxCount) * 60)}px;">
+                    <div class="bar-label">${day.date}<br><strong>${day.count}</strong></div>
+                </div>
+            `).join('');
+
+            // Accounts
+            const accTable = document.getElementById('accounts-table');
+            if (d.accounts.length === 0) {
+                accTable.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#64748b;">Нет аккаунтов</td></tr>';
+            } else {
+                accTable.innerHTML = d.accounts.map(a => `
+                    <tr>
+                        <td>${a.login}</td>
+                        <td><span class="status ${a.status}">${a.status}</span></td>
+                        <td style="color:#4ade80;">${a.success}</td>
+                        <td style="color:#f87171;">${a.failed}</td>
+                        <td style="color:${a.conversion > 80 ? '#4ade80' : a.conversion > 50 ? '#eab308' : '#f87171'};">${a.conversion}%</td>
+                        <td>${a.total_posts}</td>
+                        <td>${a.daily_posts}</td>
+                    </tr>
+                `).join('');
+            }
+
+            // Vacancies
+            const vacTable = document.getElementById('vacancies-table');
+            if (d.vacancies.length === 0) {
+                vacTable.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#64748b;">Нет активных вакансий</td></tr>';
+            } else {
+                vacTable.innerHTML = d.vacancies.map(v => `
+                    <tr><td>#${v.id}</td><td>${v.title}</td><td>${v.posts}</td><td>${v.groups}</td></tr>
+                `).join('');
+            }
+        }
+
+        async function refreshBalance() {
+            const resp = await fetch('/api/stats/balance');
+            const d = await resp.json();
+
+            document.getElementById('balance-summary').textContent =
+                `${d.live_accounts} акков · ${d.total_groups} групп · ~${d.ideal_per_account} на акк`;
+
+            const table = document.getElementById('balance-table');
+            if (d.accounts.length === 0) {
+                table.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#64748b;">Нет активных аккаунтов</td></tr>';
+            } else {
+                table.innerHTML = d.accounts.map(a => {
+                    const pct = d.ideal_per_account > 0
+                        ? Math.round((a.groups_posted / d.ideal_per_account) * 100)
+                        : 0;
+                    const color = pct > 90 ? '#4ade80' : pct > 50 ? '#eab308' : '#f87171';
+                    return `
+                        <tr>
+                            <td>${a.name}</td>
+                            <td>${a.groups_posted}</td>
+                            <td>${a.daily_posts}</td>
+                            <td style="color:${color};">${pct}% ${pct >= 100 ? '✅' : pct >= 70 ? '⚠️' : '⬆️'}</td>
+                        </tr>
+                    `;
+                }).join('');
+            }
+        }
+
+        async function rebalance() {
+            if (!confirm('Сбросить дневные счётчики и перераспределить нагрузку?')) return;
+            const resp = await fetch('/api/stats/rebalance', { method: 'POST' });
+            const d = await resp.json();
+            alert(d.message);
+            refreshBalance();
+        }
+
+        // Auto-refresh every 10 seconds
+        refreshStats();
+        setInterval(refreshStats, 10000);
+    </script>
 </body>
 </html>

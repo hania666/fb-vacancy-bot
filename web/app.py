@@ -485,7 +485,167 @@ def scheduler_page(request: Request):
     })
 
 
-# ---- Routes: Statistics ----
+# ---- API: Statistics JSON ----
+
+
+@app.get("/api/stats")
+def api_stats():
+    """Return statistics data as JSON"""
+    db = get_db()
+    
+    # Overall counts
+    total_posts = db.query(PostingLog).count()
+    success = db.query(PostingLog).filter(PostingLog.status == "success").count()
+    failed = db.query(PostingLog).filter(PostingLog.status == "failed").count()
+    banned_logs = db.query(PostingLog).filter(PostingLog.status == "banned").count()
+    
+    # Conversion rate
+    conversion = round((success / (success + failed)) * 100, 1) if (success + failed) > 0 else 0
+    
+    # Accounts stats
+    accounts_stats = []
+    for acc in db.query(Account).all():
+        acc_success = db.query(PostingLog).filter(
+            PostingLog.account_id == acc.id, PostingLog.status == "success"
+        ).count()
+        acc_failed = db.query(PostingLog).filter(
+            PostingLog.account_id == acc.id, PostingLog.status == "failed"
+        ).count()
+        acc_conversion = round((acc_success / (acc_success + acc_failed)) * 100, 1) if (acc_success + acc_failed) > 0 else 0
+        accounts_stats.append({
+            "id": acc.id,
+            "login": acc.login or f"Акк #{acc.id}",
+            "status": acc.status,
+            "success": acc_success,
+            "failed": acc_failed,
+            "conversion": acc_conversion,
+            "total_posts": acc.total_post_count or 0,
+            "daily_posts": acc.daily_post_count or 0,
+        })
+    
+    # Today stats
+    today = datetime.utcnow().replace(hour=0, minute=0, second=0)
+    today_success = db.query(PostingLog).filter(
+        PostingLog.status == "success", PostingLog.posted_at >= today
+    ).count()
+    today_failed = db.query(PostingLog).filter(
+        PostingLog.status == "failed", PostingLog.posted_at >= today
+    ).count()
+    
+    # 7 days history
+    from datetime import timedelta
+    days_history = []
+    for i in range(6, -1, -1):
+        day = (datetime.utcnow() - timedelta(days=i)).replace(hour=0, minute=0, second=0)
+        next_day = day + timedelta(days=1)
+        day_count = db.query(PostingLog).filter(
+            PostingLog.status == "success",
+            PostingLog.posted_at >= day,
+            PostingLog.posted_at < next_day,
+        ).count()
+        days_history.append({
+            "date": day.strftime("%a"),
+            "count": day_count,
+        })
+    
+    # Active vacancies
+    active_vacancies = []
+    for vac in db.query(Vacancy).filter(Vacancy.is_active == True).all():
+        vac_posts = db.query(PostingLog).filter(
+            PostingLog.vacancy_id == vac.id, PostingLog.status == "success"
+        ).count()
+        vac_groups = db.query(PostingLog).filter(
+            PostingLog.vacancy_id == vac.id, PostingLog.status == "success"
+        ).distinct(PostingLog.group_id).count()
+        active_vacancies.append({
+            "id": vac.id,
+            "title": vac.title or f"Вакансия #{vac.id}",
+            "posts": vac_posts,
+            "groups": vac_groups,
+        })
+    
+    # Total groups count
+    total_groups = db.query(Group).count()
+    
+    db.close()
+    
+    return JSONResponse({
+        "total_posts": total_posts,
+        "success": success,
+        "failed": failed,
+        "banned": banned_logs,
+        "conversion": conversion,
+        "today_success": today_success,
+        "today_failed": today_failed,
+        "accounts": accounts_stats,
+        "days": days_history,
+        "vacancies": active_vacancies,
+        "total_groups": total_groups,
+    })
+
+
+@app.get("/api/stats/balance")
+def api_balance():
+    """Get group distribution across accounts for rebalancing"""
+    db = get_db()
+    
+    accounts = db.query(Account).filter(Account.status == "ready").all()
+    total_live = len(accounts)
+    
+    # Count how many groups each account has posted to
+    balance_data = []
+    for acc in accounts:
+        posted_groups = db.query(PostingLog.group_id).filter(
+            PostingLog.account_id == acc.id,
+            PostingLog.status == "success",
+        ).distinct().count()
+        balance_data.append({
+            "id": acc.id,
+            "name": acc.login or f"Акк #{acc.id}",
+            "groups_posted": posted_groups,
+            "daily_posts": acc.daily_post_count or 0,
+        })
+    
+    total_groups = db.query(Group).count()
+    ideal_per_account = max(1, total_groups // total_live) if total_live > 0 else 0
+    
+    db.close()
+    
+    return JSONResponse({
+        "total_groups": total_groups,
+        "live_accounts": total_live,
+        "ideal_per_account": ideal_per_account,
+        "accounts": balance_data,
+    })
+
+
+@app.post("/api/stats/rebalance")
+def api_do_rebalance():
+    """Rebalance: distribute groups across live accounts"""
+    # This just logs the intent for now, actual rebalancing
+    # happens during posting (PostingEngine picks groups for each account)
+    db = get_db()
+    
+    accounts = db.query(Account).filter(Account.status == "ready").all()
+    total_groups = db.query(Group).count()
+    per_account = max(1, total_groups // len(accounts)) if accounts else 0
+    
+    # Reset daily counters for a fresh start
+    for acc in accounts:
+        acc.daily_post_count = 0
+    db.commit()
+    db.close()
+    
+    return JSONResponse({
+        "status": "ok",
+        "message": f"Ребаланс: {len(accounts)} акков, ~{per_account} групп на акк. Дневные счётчики сброшены.",
+        "accounts": len(accounts),
+        "groups_per_account": per_account,
+    })
+
+
+# ---- Routes: Statistics Page ----
+
 
 @app.get("/stats", response_class=HTMLResponse)
 def stats(request: Request):
