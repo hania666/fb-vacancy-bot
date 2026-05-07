@@ -469,6 +469,30 @@ def action_post_all(vacancy_id: int):
         return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
 
 
+@app.post("/actions/post-multi")
+async def action_post_multi(
+    request: Request,
+):
+    """
+    Post from multiple accounts, each with its own vacancy.
+    
+    Body: JSON with format:
+    {"assignments": [{"account_id": 1, "vacancy_id": 1}, ...]}
+    """
+    try:
+        body = await request.json()
+        assignments = body.get("assignments", [])
+        if not assignments:
+            return JSONResponse({"status": "error", "message": "No assignments provided"})
+        
+        engine = PostingEngine()
+        result = engine.run_multiple_accounts_with_vacancies(assignments)
+        return JSONResponse(result)
+    except Exception as e:
+        logger.error(f"Post multi error: {e}")
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
+
 @app.get("/actions/test-ix")
 def action_test_ix():
     """Test connection to ixBrowser"""

@@ -38,7 +38,6 @@ class PostingEngine:
     
     def _get_session_groups(self, db, account_id: int, limit: int = 10) -> List[Group]:
         """Get groups that haven't been posted to recently by this account"""
-        # Find groups where this account hasn't posted today
         today = datetime.utcnow().date()
         posted_group_ids = db.query(PostingLog.group_id).filter(
             PostingLog.account_id == account_id,
@@ -82,132 +81,212 @@ class PostingEngine:
     def _post_to_group(self, driver: Chrome, group_url: str,
                        text: str, photo_path: str = None) -> tuple:
         """
-        Post to a single Facebook group.
+        Post to a single Facebook group using real FB selectors.
+        
+        Flow (based on user's manual test):
+        1. Navigate to group
+        2. Click "Переглянути групу" (View Group) if present
+        3. Click "Напишіть щось..." (Write something) to open post composer
+        4. Type text into the contenteditable <p> element
+        5. Upload photo via photo button
+        6. Click "Опублікувати" (Publish)
+        7. Return to groups list, repeat
         
         Returns:
             (success: bool, message: str)
         """
         try:
-            # Navigate to group
+            # STEP 1: Navigate to group
             driver.get(f"{group_url}")
             time.sleep(random.uniform(3.0, 5.0))
             
-            # Wait for page to load
-            WebDriverWait(driver, 10).until(
+            # Wait for body to load
+            WebDriverWait(driver, 15).until(
                 EC.presence_of_element_located((By.TAG_NAME, "body"))
             )
             
-            # Look for the post creation area
-            # Facebook has different selectors depending on version
-            post_box_selectors = [
-                "//div[@aria-label=\"Создать публикацию\"]",
-                "//div[@aria-label=\"Create a post\"]",
-                "//div[@aria-label=\"Напишите что-нибудь...\"]",
-                "//div[@aria-label=\"Write something...\"]",
-                "//div[@role='textbox' and contains(@aria-label, 'публикац')]",
-                "//div[@role='textbox' and contains(@aria-label, 'post')]",
-                "//div[@class='notranslate' and @contenteditable='true']",
-                "//div[@contenteditable='true' and @role='textbox']",
+            # STEP 2: Click "Переглянути групу" (View Group) if present
+            try:
+                view_group_btn = driver.find_element(By.XPATH,
+                    "//span[contains(text(), 'Переглянути групу') or contains(text(), 'View Group') or contains(text(), 'Перейти до групи')]")
+                view_group_btn.click()
+                time.sleep(random.uniform(2.0, 3.0))
+                logger.info("Clicked 'View Group' button")
+            except:
+                pass
+            
+            # STEP 3: Click "Напишіть щось..." to open the post composer
+            post_composer_selectors = [
+                # Ukrainian: Напишіть щось...
+                "//span[contains(text(), 'Напишіть щось')]",
+                # Russian: Напишите что-нибудь...
+                "//span[contains(text(), 'Напишите что-нибудь')]",
+                # English: Write something...
+                "//span[contains(text(), 'Write something')]",
+                # Generic
+                "//span[contains(@class, 'x1lliihq') and contains(text(), 'Напиш')]",
+                "//span[contains(@class, 'x1lliihq') and contains(text(), 'Write')]",
+            ]
+            
+            composer_clicked = False
+            for selector in post_composer_selectors:
+                try:
+                    span = driver.find_element(By.XPATH, selector)
+                    # Click the parent clickable div (role="button")
+                    parent_button = span.find_element(By.XPATH,
+                        "./ancestor::div[@role='button']")
+                    parent_button.click()
+                    composer_clicked = True
+                    logger.info(f"Opened post composer via: {selector}")
+                    time.sleep(random.uniform(2.0, 3.0))
+                    break
+                except:
+                    continue
+            
+            if not composer_clicked:
+                return (False, "Could not open post composer (Напишіть щось... button)")
+            
+            # STEP 4: Find the text input area (contenteditable div inside dialog)
+            text_input_selectors = [
+                # The actual typing area after popup opens
+                "//div[@role='dialog']//div[@contenteditable='true']",
+                "//div[@aria-label='Напишіть щось...']",
+                "//div[@aria-label='Напишите что-нибудь...']",
+                "//div[@aria-label='Write something...']",
+                # Fallback: any contenteditable div
+                "//div[@contenteditable='true' and contains(@class, 'notranslate')]",
                 "//div[@contenteditable='true']",
             ]
             
-            post_box = None
-            for selector in post_box_selectors:
+            text_input = None
+            for selector in text_input_selectors:
                 try:
-                    post_box = driver.find_element(By.XPATH, selector)
-                    if post_box:
+                    text_input = WebDriverWait(driver, 5).until(
+                        EC.element_to_be_clickable((By.XPATH, selector))
+                    )
+                    if text_input:
+                        logger.info(f"Found text input via: {selector}")
                         break
                 except:
                     continue
             
-            if not post_box:
-                # Try clicking the "Write post" button first
-                try:
-                    write_btn = driver.find_element(By.XPATH,
-                        "//span[contains(text(), 'Напишите') or contains(text(), 'Write') or contains(text(), 'Створити')]")
-                    write_btn.click()
-                    time.sleep(2)
-                    
-                    # Try again
-                    for selector in post_box_selectors:
-                        try:
-                            post_box = driver.find_element(By.XPATH, selector)
-                            if post_box:
-                                break
-                        except:
-                            continue
-                except:
-                    pass
+            if not text_input:
+                return (False, "Could not find text input area in dialog")
             
-            if not post_box:
-                return (False, "Could not find post input box")
+            # Click and type the text
+            text_input.click()
+            time.sleep(0.5)
             
-            # Click to activate
-            post_box.click()
-            time.sleep(1)
-            
-            # Type the text
-            post_box.clear()
-            
-            # Send text in chunks with human-like typing
+            # Type text human-like (line by line)
             for line in text.split('\n'):
-                post_box.send_keys(line)
-                time.sleep(random.uniform(0.05, 0.15))
-                post_box.send_keys(Keys.SHIFT + Keys.ENTER)
+                text_input.send_keys(line)
+                time.sleep(random.uniform(0.08, 0.2))
+                text_input.send_keys(Keys.SHIFT + Keys.ENTER)
             
             time.sleep(random.uniform(1.0, 2.0))
             
-            # Upload photo if provided
+            # STEP 5: Upload photo
             if photo_path and os.path.exists(photo_path):
                 try:
-                    # Find photo upload input
-                    photo_input = driver.find_element(By.XPATH,
-                        "//input[@type='file' and contains(@accept, 'image')]")
-                    if photo_input:
-                        photo_input.send_keys(os.path.abspath(photo_path))
-                        time.sleep(random.uniform(3.0, 5.0))
-                except:
-                    # Try clicking the photo button
-                    try:
-                        photo_btn = driver.find_element(By.XPATH,
-                            "//div[@aria-label='Фото' or @aria-label='Photo' or @aria-label='Додати фото']")
-                        photo_btn.click()
-                        time.sleep(2)
-                        
-                        # Now find file input (might be hidden)
+                    # Click photo button in the post popup
+                    photo_btn_selectors = [
+                        # Ukrainian: Фото
+                        "//div[@role='button']//span[contains(text(), 'Фото') and not(contains(text(), 'Відео'))]",
+                        # Russian: Фото  
+                        "//div[@role='button']//span[contains(text(), 'Фото')]",
+                        # English: Photo
+                        "//div[@role='button']//span[contains(text(), 'Photo')]",
+                        # The actual webp icon button
+                        "//img[contains(@src, 'photo')]/ancestor::div[@role='button']",
+                    ]
+                    
+                    photo_clicked = False
+                    for selector in photo_btn_selectors:
+                        try:
+                            photo_btn = driver.find_element(By.XPATH, selector)
+                            parent_btn = photo_btn.find_element(By.XPATH,
+                                "./ancestor::div[@role='button']")
+                            parent_btn.click()
+                            photo_clicked = True
+                            logger.info("Clicked photo button")
+                            time.sleep(random.uniform(2.0, 3.0))
+                            break
+                        except:
+                            continue
+                    
+                    if photo_clicked:
+                        # Find file input
                         file_input = driver.find_element(By.XPATH,
                             "//input[@type='file']")
-                        file_input.send_keys(os.path.abspath(photo_path))
+                        abs_path = os.path.abspath(photo_path)
+                        file_input.send_keys(abs_path)
+                        logger.info(f"Uploaded photo: {abs_path}")
                         time.sleep(random.uniform(3.0, 5.0))
-                    except:
-                        pass
+                    else:
+                        # Direct file input
+                        try:
+                            file_input = driver.find_element(By.XPATH,
+                                "//input[@type='file' and contains(@accept, 'image')]")
+                            abs_path = os.path.abspath(photo_path)
+                            file_input.send_keys(abs_path)
+                            logger.info(f"Uploaded photo directly: {abs_path}")
+                            time.sleep(random.uniform(3.0, 5.0))
+                        except:
+                            logger.warning("Could not find photo upload method")
+                            
+                except Exception as e:
+                    logger.warning(f"Photo upload failed: {e}")
+                    # Continue without photo
             
-            # Submit the post
+            # STEP 6: Click "Опублікувати" (Publish) button
+            time.sleep(random.uniform(1.0, 2.0))
+            
             submit_selectors = [
-                "//div[@aria-label='Опубликовать' or @aria-label='Publish']",
-                "//span[contains(text(), 'Опубликовать') or contains(text(), 'Publish') or contains(text(), 'Опублікувати')]",
+                # Ukrainian: Опублікувати
+                "//span[contains(text(), 'Опублікувати')]",
+                # Russian: Опубликовать
+                "//span[contains(text(), 'Опубликовать')]",
+                # English: Publish
+                "//span[contains(text(), 'Publish') and not(contains(text(), 'Photo'))]",
+                # English: Post
+                "//span[contains(text(), 'Post') and not(contains(text(), 'Photo'))]",
+                # Inside dialog
+                "//div[@role='dialog']//span[contains(text(), 'Опублікувати')]",
+                "//div[@role='dialog']//span[contains(text(), 'Publish')]",
             ]
             
             submitted = False
             for selector in submit_selectors:
                 try:
-                    publish_btn = driver.find_element(By.XPATH, selector)
+                    publish_btn = WebDriverWait(driver, 5).until(
+                        EC.element_to_be_clickable((By.XPATH, selector))
+                    )
                     publish_btn.click()
                     submitted = True
+                    logger.info(f"Clicked publish via: {selector}")
                     time.sleep(random.uniform(2.0, 4.0))
                     break
                 except:
                     continue
             
             if not submitted:
-                # Try pressing Ctrl+Enter
-                post_box.send_keys(Keys.CONTROL + Keys.ENTER)
-                time.sleep(2)
+                # Last resort: Ctrl+Enter
+                try:
+                    text_input.send_keys(Keys.CONTROL + Keys.ENTER)
+                    submitted = True
+                    time.sleep(2)
+                except:
+                    pass
             
-            # Check for errors
-            body_text = driver.find_element(By.TAG_NAME, "body").text.lower()
-            if "checkpoint" in driver.current_url.lower():
-                return (False, "Account banned or checkpoint")
+            if not submitted:
+                return (False, "Could not find publish button (Опублікувати)")
+            
+            # STEP 7: Ban detection
+            current_url = driver.current_url.lower()
+            if "checkpoint" in current_url:
+                return (False, "Account checkpoint - needs verification")
+            if "blocked" in current_url or "restricted" in current_url:
+                return (False, "Account restricted or blocked")
             
             return (True, "Posted successfully")
             
@@ -230,13 +309,11 @@ class PostingEngine:
         db.add(log)
         
         if success:
-            # Update group stats
             group = db.query(Group).filter(Group.id == group_id).first()
             if group:
                 group.post_count = (group.post_count or 0) + 1
                 group.last_posted_at = datetime.utcnow()
             
-            # Update account stats
             account = db.query(Account).filter(Account.id == account_id).first()
             if account:
                 account.total_post_count = (account.total_post_count or 0) + 1
@@ -254,9 +331,6 @@ class PostingEngine:
         
         1 batch = post to N groups. Between batches - longer break.
         10 batches x 10 groups = 100 groups total.
-        
-        Returns:
-            dict with results
         """
         db = SessionLocal()
         account = db.query(Account).filter(Account.id == account_id).first()
@@ -269,7 +343,6 @@ class PostingEngine:
             db.close()
             return {"status": "error", "message": "Vacancy not found or inactive"}
         
-        # Use account's profile ID if not specified
         if not profile_id:
             profile_id = account.ix_profile_id
         
@@ -294,7 +367,6 @@ class PostingEngine:
         }
         
         try:
-            # Check if this account can post
             db = SessionLocal()
             if account.status != "ready":
                 logger.warning(f"Account {account_id} status is '{account.status}', not 'ready'")
@@ -307,14 +379,12 @@ class PostingEngine:
             db.close()
             
             for batch_idx in range(batches):
-                # Check daily limit again
                 db = SessionLocal()
                 if not self._check_daily_limit(db, account_id):
                     results["limit_reached"] = 1
                     db.close()
                     break
                 
-                # Get groups for this batch
                 groups = self._get_session_groups(db, account_id, groups_per_batch)
                 db.close()
                 
@@ -324,8 +394,12 @@ class PostingEngine:
                 
                 logger.info(f"📦 Batch {batch_idx + 1}/{batches}: {len(groups)} groups")
                 
-                # Post to each group
                 for group in groups:
+                    batch_result = {
+                        "group_url": group.url,
+                        "group_id": group.id,
+                    }
+                    
                     success, message = self._post_to_group(
                         driver=driver,
                         group_url=group.url,
@@ -333,7 +407,10 @@ class PostingEngine:
                         photo_path=vacancy.photo_path,
                     )
                     
-                    # Log result
+                    batch_result["success"] = success
+                    batch_result["message"] = message
+                    results["overall"].append(batch_result)
+                    
                     db = SessionLocal()
                     self._log_posting_result(
                         db=db,
@@ -351,8 +428,7 @@ class PostingEngine:
                     else:
                         results["failed"] += 1
                         
-                        # Check if banned
-                        if "banned" in message.lower() or "checkpoint" in message.lower():
+                        if "banned" in message.lower() or "checkpoint" in message.lower() or "restricted" in message.lower():
                             account = db.query(Account).filter(Account.id == account_id).first()
                             if account:
                                 account.status = "banned"
@@ -366,14 +442,12 @@ class PostingEngine:
                     db.close()
                     results["total_posts"] += 1
                     
-                    # Random delay between posts
                     delay = random.randint(self.MIN_DELAY_BETWEEN_POSTS, self.MAX_DELAY_BETWEEN_POSTS)
-                    logger.info(f"⏳ Waiting {delay}s...")
+                    logger.info(f"⏳ Waiting {delay}s before next post...")
                     time.sleep(delay)
                 
                 results["total_batches"] += 1
                 
-                # Longer break between batches
                 if batch_idx < batches - 1:
                     break_time = random.randint(self.BATCH_BREAK_MIN, self.BATCH_BREAK_MAX)
                     logger.info(f"☕ Batch break: {break_time // 60} min")
@@ -392,26 +466,60 @@ class PostingEngine:
         
         return results
     
+    def run_multiple_accounts_with_vacancies(self, assignments: list) -> dict:
+        """
+        Run multiple accounts, each with its own vacancy.
+        
+        Args:
+            assignments: List of dicts:
+                [{"account_id": 1, "vacancy_id": 1, "groups_per_batch": 10, "batches": 10}, ...]
+        """
+        all_results = []
+        for assignment in assignments:
+            account_id = assignment["account_id"]
+            vacancy_id = assignment["vacancy_id"]
+            groups_per_batch = assignment.get("groups_per_batch", 10)
+            batches = assignment.get("batches", 10)
+            
+            db = SessionLocal()
+            account = db.query(Account).filter(Account.id == account_id).first()
+            vacancy = db.query(Vacancy).filter(Vacancy.id == vacancy_id).first()
+            db.close()
+            
+            acc_name = account.name if account else f"ID:{account_id}"
+            vac_title = vacancy.title if vacancy else f"ID:{vacancy_id}"
+            
+            logger.info(f"🚀 Account '{acc_name}' posting vacancy '{vac_title}'")
+            
+            result = self.run_posting_round(
+                account_id=account_id,
+                vacancy_id=vacancy_id,
+                groups_per_batch=groups_per_batch,
+                batches=batches,
+            )
+            
+            all_results.append({
+                "account_id": account_id,
+                "account_name": acc_name,
+                "vacancy_title": vac_title,
+                "result": result,
+            })
+            
+            delay = random.randint(30, 60)
+            logger.info(f"⏳ Waiting {delay}s before next account...")
+            time.sleep(delay)
+        
+        return {"all_accounts": all_results}
+    
     def run_all_accounts(self, vacancy_id: int) -> dict:
-        """Run posting for all 'ready' accounts"""
+        """Run posting for all 'ready' accounts with the same vacancy"""
         db = SessionLocal()
         accounts = db.query(Account).filter(Account.status == "ready").all()
         db.close()
         
-        all_results = []
-        for acc in accounts:
-            logger.info(f"🚀 Starting posting round for account #{acc.id}")
-            result = self.run_posting_round(
-                account_id=acc.id,
-                vacancy_id=vacancy_id,
-            )
-            all_results.append({
-                "account_id": acc.id,
-                "login": acc.login,
-                "result": result,
-            })
-            
-            # Short delay between accounts
-            time.sleep(random.randint(30, 60))
+        assignments = [
+            {"account_id": acc.id, "vacancy_id": vacancy_id}
+            for acc in accounts
+        ]
         
-        return {"overall": all_results}
+        return self.run_multiple_accounts_with_vacancies(assignments)
