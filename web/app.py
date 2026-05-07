@@ -493,6 +493,27 @@ async def action_post_multi(
         return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
 
 
+@app.get("/actions/post-from-profile/{account_id}/{vacancy_id}")
+def action_post_from_profile(account_id: int, vacancy_id: int):
+    """
+    Post to all groups where the account is a member,
+    WITHOUT needing groups in the database.
+    
+    Goes to facebook.com/groups/joins/, collects groups automatically.
+    """
+    try:
+        engine = PostingEngine()
+        result = engine.run_posting_from_profile(
+            account_id=account_id,
+            vacancy_id=vacancy_id,
+            max_posts=30,
+        )
+        return JSONResponse(result)
+    except Exception as e:
+        logger.error(f"Post from profile error: {e}")
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
+
 @app.get("/actions/test-ix")
 def action_test_ix():
     """Test connection to ixBrowser"""

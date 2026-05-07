@@ -523,3 +523,197 @@ class PostingEngine:
         ]
         
         return self.run_multiple_accounts_with_vacancies(assignments)
+    
+    def _collect_groups_from_profile(self, driver: Chrome, max_groups: int = 100) -> list:
+        """
+        Collect group URLs from the user's "My Groups" page.
+        
+        Navigates to https://facebook.com/groups/joins/?...
+        and scrapes all group links visible.
+        
+        Returns:
+            list of group URLs (strings)
+        """
+        group_urls = []
+        
+        try:
+            # Navigate to My Groups page
+            driver.get("https://www.facebook.com/groups/joins/?nav_source=tab&ordering=viewer_added")
+            time.sleep(random.uniform(4.0, 6.0))
+            
+            # Wait for page to load
+            WebDriverWait(driver, 15).until(
+                EC.presence_of_element_located((By.TAG_NAME, "body"))
+            )
+            
+            # Scroll down gradually to load more groups
+            last_height = 0
+            scroll_attempts = 0
+            max_scrolls = 20  # Prevent infinite scroll
+            
+            while scroll_attempts < max_scrolls:
+                # Find all group links on current page
+                group_links = driver.find_elements(By.XPATH,
+                    "//a[contains(@href, '/groups/') and contains(@href, '/') and not(contains(@href, '/groups/feed')) and not(contains(@href, '/groups/joins')) and not(contains(@href, 'manage'))]"
+                )
+                
+                for link in group_links:
+                    url = link.get_attribute("href")
+                    if url and url.startswith("https://www.facebook.com/groups/") and url not in group_urls:
+                        # Filter out non-group pages
+                        if not any(x in url for x in ['/feed/', '/joins/', '/discover/', '/create/', '/manage']):
+                            group_urls.append(url)
+                
+                if len(group_urls) >= max_groups:
+                    break
+                
+                # Scroll down
+                driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                time.sleep(random.uniform(2.0, 3.0))
+                
+                new_height = driver.execute_script("return document.body.scrollHeight")
+                if new_height == last_height:
+                    scroll_attempts += 1
+                else:
+                    scroll_attempts = 0
+                last_height = new_height
+            
+            logger.info(f"📋 Collected {len(group_urls)} groups from profile")
+            
+        except Exception as e:
+            logger.error(f"Error collecting groups from profile: {e}")
+        
+        return group_urls[:max_groups]
+    
+    def run_posting_from_profile(self, account_id: int, vacancy_id: int,
+                                  max_posts: int = 30,
+                                  profile_id: str = None) -> dict:
+        """
+        Post to groups directly from the account's existing groups on Facebook,
+        WITHOUT needing groups in the database.
+        
+        1. Opens iXBrowser profile
+        2. Goes to facebook.com/groups/joins/ (Your Groups)
+        3. Collects all group URLs from the page
+        4. Posts vacancy to each group one by one
+        5. Returns to groups page after each post
+        """
+        db = SessionLocal()
+        account = db.query(Account).filter(Account.id == account_id).first()
+        vacancy = db.query(Vacancy).filter(Vacancy.id == vacancy_id, Vacancy.is_active == True).first()
+        
+        if not account:
+            db.close()
+            return {"status": "error", "message": "Account not found"}
+        if not vacancy:
+            db.close()
+            return {"status": "error", "message": "Vacancy not found or inactive"}
+        
+        if not profile_id:
+            profile_id = account.ix_profile_id
+        db.close()
+        
+        if not profile_id:
+            return {"status": "error", "message": "No iXBrowser profile ID"}
+        
+        # Open profile
+        driver = self.client.open_profile_and_get_driver(profile_id)
+        if not driver:
+            return {"status": "error", "message": "Failed to open ixBrowser profile"}
+        
+        results = {
+            "status": "success",
+            "total_posts": 0,
+            "successful": 0,
+            "failed": 0,
+            "overall": [],
+        }
+        
+        try:
+            # Step 1: Collect groups from profile
+            logger.info("🔍 Collecting groups from profile...")
+            group_urls = self._collect_groups_from_profile(driver, max_groups=max_posts)
+            
+            if not group_urls:
+                return {"status": "error", "message": "No groups found in profile"}
+            
+            logger.info(f"📋 Found {len(group_urls)} groups. Starting posting...")
+            
+            # Step 2: Post to each group
+            for idx, group_url in enumerate(group_urls):
+                if results["successful"] >= max_posts:
+                    logger.info(f"✅ Reached max_posts limit ({max_posts})")
+                    break
+                
+                logger.info(f"📦 ({idx + 1}/{len(group_urls)}) Posting to: {group_url}")
+                
+                batch_result = {
+                    "group_url": group_url,
+                    "index": idx + 1,
+                }
+                
+                success, message = self._post_to_group(
+                    driver=driver,
+                    group_url=group_url,
+                    text=vacancy.description,
+                    photo_path=vacancy.photo_path,
+                )
+                
+                batch_result["success"] = success
+                batch_result["message"] = message
+                results["overall"].append(batch_result)
+                
+                if success:
+                    results["successful"] += 1
+                else:
+                    results["failed"] += 1
+                    
+                    if "checkpoint" in message.lower() or "restricted" in message.lower() or "blocked" in message.lower():
+                        db = SessionLocal()
+                        account = db.query(Account).filter(Account.id == account_id).first()
+                        if account:
+                            account.status = "banned"
+                            account.banned_at = datetime.utcnow()
+                            db.commit()
+                        db.close()
+                        results["status"] = "banned"
+                        results["message"] = message
+                        return results
+                
+                results["total_posts"] += 1
+                
+                # Return to "My Groups" page for next post
+                if idx < len(group_urls) - 1:
+                    # Random delay
+                    delay = random.randint(self.MIN_DELAY_BETWEEN_POSTS, self.MAX_DELAY_BETWEEN_POSTS)
+                    logger.info(f"⏳ Waiting {delay}s before next post...")
+                    time.sleep(delay)
+                    
+                    # Navigate back to groups list for the next group
+                    # (posting already returns us there)
+                    if idx % 5 == 4:  # Every 5 posts, refresh the groups page
+                        driver.get("https://www.facebook.com/groups/joins/?nav_source=tab&ordering=viewer_added")
+                        time.sleep(random.uniform(3.0, 5.0))
+                    else:
+                        # Just go back
+                        try:
+                            driver.back()
+                            time.sleep(random.uniform(2.0, 3.0))
+                        except:
+                            driver.get("https://www.facebook.com/groups/joins/?nav_source=tab&ordering=viewer_added")
+                            time.sleep(random.uniform(3.0, 5.0))
+            
+            logger.info(f"✅ Done! {results['successful']} successful, {results['failed']} failed")
+            
+        except Exception as e:
+            logger.error(f"Posting from profile error: {e}")
+            results["status"] = "error"
+            results["message"] = str(e)
+        finally:
+            try:
+                self.client.close_profile(profile_id)
+                driver.quit()
+            except:
+                pass
+        
+        return results
