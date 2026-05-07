@@ -38,12 +38,17 @@ class IXBrowserClient:
                 resp = httpx.post(url, headers=self._headers, json=data or {}, timeout=30)
             
             result = resp.json()
-            self.code = result.get("code", -1)
-            self.message = result.get("message", "")
             
-            if "data" in result:
-                return result["data"]
-            return result if result.get("code") == 0 else None
+            # ixBrowser error format: {"error": {"code": N, "message": "..."}, "data": null}
+            # Success format: {"error": null, "data": {...}}
+            if result.get("error") and isinstance(result["error"], dict):
+                self.code = result["error"].get("code", -1)
+                self.message = result["error"].get("message", "Unknown error")
+                return None
+            
+            self.code = 0
+            self.message = "ok"
+            return result.get("data")
         except Exception as e:
             logger.error(f"ixBrowser API error: {e}")
             self.code = -1
