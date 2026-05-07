@@ -10,3 +10,4 @@ sqlalchemy==2.0.36
 aiosqlite==0.20.0
 selenium==4.27.1
 httpx==0.28.1
+ixbrowser-local-api>=1.0
