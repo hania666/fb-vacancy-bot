@@ -59,11 +59,11 @@ class IXBrowserClient:
 
     def get_profile_list(self) -> Optional[list]:
         """Get all profiles"""
-        return self._request("GET", "/profile/list")
+        return self._request("POST", "/profile/list")
 
     def get_profile_info(self, profile_id: str) -> Optional[dict]:
         """Get profile info by ID"""
-        return self._request("GET", f"/profile/info?id={profile_id}")
+        return self._request("POST", "/profile/info", {"id": profile_id})
 
     def create_profile(self, name: str, proxy: str = "", proxy_type: str = "http",
                        user_agent: str = "", note: str = "",
@@ -118,7 +118,7 @@ class IXBrowserClient:
 
     def get_cookies(self, profile_id: str) -> Optional[list]:
         """Get cookies from an open profile"""
-        return self._request("GET", f"/cookies/get?id={profile_id}")
+        return self._request("POST", "/cookies/get", {"id": profile_id})
 
     def set_cookies(self, profile_id: str, cookies: list) -> bool:
         """Set cookies for a profile"""
@@ -160,7 +160,7 @@ class IXBrowserClient:
 
     def search_profiles(self, keyword: str = "") -> Optional[list]:
         """Search profiles by keyword"""
-        return self._request("GET", f"/profile/search?keyword={keyword}")
+        return self._request("POST", "/profile/search", {"keyword": keyword})
 
 
 def test_connection() -> dict:
