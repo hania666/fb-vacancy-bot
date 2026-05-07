@@ -4,15 +4,8 @@
 
 Usage:
     python tools/collect_my_groups.py --profile 1
-    python tools/collect_my_groups.py --profile 1 --max 500 --output groups.txt --no-db
-    python tools/collect_my_groups.py --profile 1 --import-file groups.txt
-
-What it does:
-    1. Opens iXBrowser profile
-    2. Goes to facebook.com/groups/joins/ (your groups)
-    3. Scrolls smartly (inside FB container, not just body)
-    4. Collects all group URLs
-    5. Saves to DB and/or text file
+    python tools/collect_my_groups.py --profile 1 --max 1000 --output groups.txt
+    python tools/collect_my_groups.py --import-file groups.txt
 """
 
 import os
@@ -25,6 +18,8 @@ import argparse
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.common.action_chains import ActionChains
 
 from core.ixbrowser_client import IXBrowserClient
 
@@ -35,7 +30,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Group URL segments to exclude
 EXCLUDED = {
     "feed", "joins", "search", "discover", "manage", "create",
     "saved", "invite", "requests", "pending", "member", "members",
@@ -45,16 +39,15 @@ EXCLUDED = {
 
 
 def _extract_group_id(href: str):
-    """Extract clean group ID/slug from a Facebook URL."""
+    """Extract clean group ID from FB URL."""
     if not href or "/groups/" not in href:
         return None
     try:
-        # Remove query params and fragments
         url = href.split("?")[0].split("#")[0].rstrip("/")
         parts = url.split("/groups/")
         if len(parts) < 2:
             return None
-        rest = parts[1].split("/")[0]  # take only first segment after /groups/
+        rest = parts[1].split("/")[0]
         if not rest or rest in EXCLUDED or rest.startswith("_"):
             return None
         return rest
@@ -62,121 +55,142 @@ def _extract_group_id(href: str):
         return None
 
 
-def _scroll_fb_container(driver) -> bool:
+def _collect_links(driver) -> set:
+    """Grab all group URLs currently visible on the page."""
+    found = set()
+    links = driver.find_elements(By.TAG_NAME, "a")
+    for link in links:
+        try:
+            href = link.get_attribute("href")
+            gid = _extract_group_id(href)
+            if gid:
+                found.add(f"https://www.facebook.com/groups/{gid}/")
+        except Exception:
+            pass
+    return found
+
+
+def _do_scroll(driver, attempt: int):
     """
-    Scroll Facebook's internal groups container.
-    FB renders content in a virtual scrollable div, not document.body.
-    Returns True if page height grew (new content loaded).
+    Try multiple scroll strategies. FB sometimes needs different approaches.
     """
-    old_height = driver.execute_script("""
-        const selectors = [
-            '[role="main"]',
-            '[data-pagelet="GroupsFeed"]',
-            '[data-pagelet="GroupsJoinedByViewer"]',
-            'div[class*="html-div"][style*="overflow"]',
-        ];
-        for (const sel of selectors) {
-            const el = document.querySelector(sel);
-            if (el && el.scrollHeight > 500) {
-                const old = el.scrollTop;
-                el.scrollTop += 1800;
-                if (el.scrollTop !== old) return el.scrollHeight;
+    strategy = attempt % 4
+
+    if strategy == 0:
+        # Standard window scroll — most reliable trigger for lazy loading
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+
+    elif strategy == 1:
+        # Scroll by fixed amount — sometimes triggers when scrollTo doesn't
+        driver.execute_script("window.scrollBy(0, 1200);")
+
+    elif strategy == 2:
+        # Send END key to body — simulates real keyboard scroll
+        try:
+            body = driver.find_element(By.TAG_NAME, "body")
+            body.send_keys(Keys.END)
+        except Exception:
+            driver.execute_script("window.scrollBy(0, 1500);")
+
+    elif strategy == 3:
+        # Scroll main container if exists
+        driver.execute_script("""
+            const candidates = [
+                document.querySelector('[role="main"]'),
+                document.querySelector('[data-pagelet="GroupsJoinedByViewer"]'),
+                document.querySelector('[data-pagelet="GroupsFeed"]'),
+            ];
+            for (const el of candidates) {
+                if (el && el.scrollHeight > window.innerHeight) {
+                    el.scrollTop = el.scrollHeight;
+                    break;
+                }
             }
-        }
-        // Fallback: scroll window
-        const before = document.body.scrollHeight;
-        window.scrollBy(0, 1800);
-        return before;
-    """)
+            window.scrollTo(0, document.body.scrollHeight);
+        """)
 
-    time.sleep(random.uniform(2.5, 3.5))
 
-    new_height = driver.execute_script("""
-        const selectors = [
-            '[role="main"]',
-            '[data-pagelet="GroupsFeed"]',
-            '[data-pagelet="GroupsJoinedByViewer"]',
-        ];
-        for (const sel of selectors) {
-            const el = document.querySelector(sel);
-            if (el && el.scrollHeight > 500) return el.scrollHeight;
-        }
-        return document.body.scrollHeight;
-    """)
-
-    return new_height > old_height
+def _page_height(driver) -> int:
+    return driver.execute_script("return document.body.scrollHeight")
 
 
 def collect_groups(driver, max_groups: int = 500) -> list:
-    """
-    Navigate to FB groups page and collect all group URLs.
-    Returns sorted list of clean group URLs.
-    """
+    """Collect all group URLs from FB groups page."""
 
-    # Try the most reliable URL first
     urls_to_try = [
         "https://www.facebook.com/groups/joins/?nav_source=tab&ordering=viewer_added",
         "https://www.facebook.com/groups/feed/",
     ]
 
-    loaded = False
     for url in urls_to_try:
         logger.info(f"🌐 Navigating to: {url}")
         driver.get(url)
-        time.sleep(random.uniform(4.0, 6.0))
+        time.sleep(random.uniform(5.0, 7.0))  # longer initial wait
 
         current = driver.current_url.lower()
         if "login" in current or "checkpoint" in current:
-            logger.error("❌ Account not logged in or checkpoint! Login in iXBrowser first.")
+            logger.error("❌ Not logged in! Login in iXBrowser first.")
             return []
+
         if "groups" in current:
-            logger.info(f"✅ On groups page: {current[:80]}")
-            loaded = True
+            logger.info(f"✅ On page: {current[:80]}")
             break
 
-    if not loaded:
-        logger.warning("⚠️  Could not land on groups page, trying anyway...")
+    # Initial collection before any scrolling
+    all_urls = _collect_links(driver)
+    logger.info(f"   Initial: {len(all_urls)} groups")
 
-    all_urls = set()
     no_new_streak = 0
     scroll_num = 0
-    MAX_SCROLLS = 60
-    MAX_NO_NEW = 5
-
-    logger.info("🔍 Starting collection...")
+    MAX_SCROLLS = 80
+    MAX_NO_NEW = 8  # wait longer before giving up
+    last_height = _page_height(driver)
 
     while scroll_num < MAX_SCROLLS and len(all_urls) < max_groups:
         scroll_num += 1
-
-        # Collect links visible on page
         prev_count = len(all_urls)
-        links = driver.find_elements(By.TAG_NAME, "a")
 
-        for link in links:
-            try:
-                href = link.get_attribute("href")
-                gid = _extract_group_id(href)
-                if gid:
-                    all_urls.add(f"https://www.facebook.com/groups/{gid}/")
-            except Exception:
-                pass
+        # Scroll
+        _do_scroll(driver, scroll_num)
+
+        # Wait for content to load — longer wait every 5 scrolls
+        if scroll_num % 5 == 0:
+            wait = random.uniform(4.0, 6.0)
+        else:
+            wait = random.uniform(2.5, 3.5)
+        time.sleep(wait)
+
+        # Collect
+        new_links = _collect_links(driver)
+        all_urls.update(new_links)
 
         new_found = len(all_urls) - prev_count
-        logger.info(f"   Scroll {scroll_num:2d}: {new_found:3d} new  |  total: {len(all_urls)}")
+        new_height = _page_height(driver)
+        height_grew = new_height > last_height
+        last_height = new_height
 
-        if new_found == 0:
+        logger.info(
+            f"   Scroll {scroll_num:2d}: +{new_found:3d} new  |  "
+            f"total: {len(all_urls)}  |  "
+            f"page grew: {'✅' if height_grew else '—'}"
+        )
+
+        if new_found == 0 and not height_grew:
             no_new_streak += 1
         else:
             no_new_streak = 0
 
         if no_new_streak >= MAX_NO_NEW:
-            logger.info("   ✅ No new groups for 5 scrolls — reached end")
+            logger.info(f"   ✅ No new content for {MAX_NO_NEW} scrolls — reached end")
             break
 
-        grew = _scroll_fb_container(driver)
-        if not grew and no_new_streak >= 2:
-            logger.info("   ✅ Page stopped growing")
-            break
+        # Every 10 scrolls scroll back up a bit then down (helps FB re-render)
+        if scroll_num % 10 == 0 and scroll_num > 0:
+            logger.info("   🔄 Scroll up briefly to help FB load more...")
+            driver.execute_script("window.scrollBy(0, -800);")
+            time.sleep(1.5)
+            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            time.sleep(random.uniform(3.0, 5.0))
 
     return sorted(all_urls)
 
@@ -204,7 +218,6 @@ def save_to_db(urls: list) -> tuple:
 
 
 def save_to_file(urls: list, path: str):
-    """Save URLs to text file, one per line."""
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(urls) + "\n")
@@ -212,7 +225,6 @@ def save_to_file(urls: list, path: str):
 
 
 def import_from_file(path: str) -> list:
-    """Load URLs from text file."""
     if not os.path.exists(path):
         logger.error(f"File not found: {path}")
         return []
@@ -232,37 +244,36 @@ def main():
         epilog="""
 Examples:
   python tools/collect_my_groups.py --profile 1
-  python tools/collect_my_groups.py --profile 1 --max 1000 --output my_groups.txt
-  python tools/collect_my_groups.py --import-file my_groups.txt   # import file → DB only
+  python tools/collect_my_groups.py --profile 1 --max 1000 --output groups.txt
+  python tools/collect_my_groups.py --import-file groups.txt
         """,
     )
     parser.add_argument("--profile", default="1", help="iXBrowser profile ID (default: 1)")
-    parser.add_argument("--max", type=int, default=500, help="Max groups to collect (default: 500)")
-    parser.add_argument("--output", default="", help="Save URLs to this text file (optional)")
+    parser.add_argument("--max", type=int, default=500, help="Max groups (default: 500)")
+    parser.add_argument("--output", default="", help="Save to text file (optional)")
     parser.add_argument("--no-db", action="store_true", help="Don't save to database")
-    parser.add_argument("--import-file", default="", help="Import URLs from file to DB (skips browser)")
+    parser.add_argument("--import-file", default="", help="Import file → DB only, no browser")
     args = parser.parse_args()
 
-    # ── Mode: import file only ──────────────────────────────────────────────
+    # ── Mode: import from file only ─────────────────────────────────────────
     if args.import_file:
-        logger.info(f"📂 Importing from file: {args.import_file}")
+        logger.info(f"📂 Importing: {args.import_file}")
         urls = import_from_file(args.import_file)
         if not urls:
-            logger.error("No valid URLs found in file")
+            logger.error("No valid URLs found")
             sys.exit(1)
-        logger.info(f"Found {len(urls)} URLs in file")
+        logger.info(f"Found {len(urls)} URLs")
         added, skipped = save_to_db(urls)
         logger.info(f"✅ DB: {added} added, {skipped} already existed")
         return
 
-    # ── Mode: collect from browser ──────────────────────────────────────────
+    # ── Mode: collect via browser ───────────────────────────────────────────
     logger.info("🔌 Connecting to iXBrowser...")
     client = IXBrowserClient()
     driver = client.open_profile_and_get_driver(args.profile)
 
     if not driver:
-        logger.error("❌ Failed to open iXBrowser profile")
-        logger.error("   Make sure iXBrowser is running")
+        logger.error("❌ Failed to open profile. Is iXBrowser running?")
         sys.exit(1)
 
     try:
@@ -274,24 +285,22 @@ Examples:
         logger.info("=" * 55)
 
         if not urls:
-            logger.warning("No groups found. Check that the account is in groups.")
+            logger.warning("No groups found.")
             return
 
         # Save to file
-        if args.output:
-            save_to_file(urls, args.output)
-        else:
-            # Always save to default file as backup
-            default_out = os.path.join(
+        out_path = args.output
+        if not out_path:
+            out_path = os.path.join(
                 os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                 "data", f"groups_profile_{args.profile}.txt"
             )
-            save_to_file(urls, default_out)
+        save_to_file(urls, out_path)
 
         # Save to DB
         if not args.no_db:
             added, skipped = save_to_db(urls)
-            logger.info(f"🗄  DB: {added} new groups added, {skipped} already existed")
+            logger.info(f"🗄  DB: {added} new, {skipped} already existed")
         else:
             logger.info("⏭️  Skipping DB (--no-db)")
 
