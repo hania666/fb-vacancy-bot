@@ -83,19 +83,16 @@ class PostingEngine:
         """
         Post to a single Facebook group.
         
-        IMPORTANT: First navigates to groups/feed/ so FB knows we're in the 
-        groups context, then opens the actual group URL.
-        
-        Inside a group page:
-        - There is typically a "Write something..." or "Create a post" section
-        - Clicking it opens a popup with text input and submit button
+        Uses WebDriverWait for reliable element detection.
+        Uses JS clipboard paste for fast text input.
+        Takes screenshot on error for diagnostics.
         
         Returns:
             (success: bool, message: str)
         """
+        group_id_str = group_url.rstrip('/').split('/')[-1]
         try:
-            # STEP 1: First ensure we're in FB groups context
-            # Otherwise FB might redirect to feed
+            # STEP 1: Ensure we're in groups context
             driver.get("https://www.facebook.com/groups/feed/")
             time.sleep(2)
             
@@ -106,124 +103,110 @@ class PostingEngine:
             
             current_url = driver.current_url.lower()
             if "checkpoint" in current_url:
-                return (False, "Account checkpoint")
+                return (False, "Account checkpoint - needs verification")
             if "login" in current_url:
-                return (False, "Logout - need to login first")
+                return (False, "Logout detected")
             
-            logger.info(f"📍 Group page loaded: {current_url[:80]}")
+            logger.info(f"📍 Group page loaded")
             
-            # STEP 3: Find post composer on the group page
-            # On a group page, the composer is typically visible at the top
-            # It's a div[role="button"] that says "Write something..." or "Create a post"
-            # NOT a textarea - that appears after clicking the button
-            
-            # First try to find an already-visible text box
+            # STEP 3: Find post composer with WebDriverWait
             post_box = None
             
-            # Strategy A: Find a contenteditable text box directly
-            # Only consider it if inside the main content area, not inside a post's comment section
-            for selector in [
-                "//div[@role='textbox' and @contenteditable='true']",
-                "//div[@contenteditable='true' and contains(@class, 'notranslate')]",
-            ]:
+            # Strategy A: Find visible contenteditable inside form (already open)
+            try:
+                # Wait up to 8s for a contenteditable inside the group's post form
+                post_box = WebDriverWait(driver, 8).until(
+                    EC.presence_of_element_located(
+                        (By.XPATH, "//form//div[@contenteditable='true' and contains(@class, 'notranslate')]")
+                    )
+                )
+                logger.info("Found textbox inside form (already open)")
+            except:
+                pass
+            
+            if not post_box:
+                # Strategy B: Find "Write something" button and click it
                 try:
-                    elements = driver.find_elements(By.XPATH, selector)
-                    for el in elements:
-                        try:
-                            parent_form = el.find_element(By.XPATH, "./ancestor::form")
-                            logger.info("Found textbox inside a form (group composer)")
-                            post_box = el
-                            break
-                        except:
-                            continue
-                    if post_box:
-                        break
-                except:
-                    continue
+                    write_btn = WebDriverWait(driver, 5).until(
+                        EC.element_to_be_clickable(
+                            (By.XPATH, "//span[contains(text(), 'Напишіть') or contains(text(), 'Напишите') or contains(text(), 'Write something')]/ancestor::div[@role='button']")
+                        )
+                    )
+                    write_btn.click()
+                    logger.info("Clicked 'Write something' button")
+                    time.sleep(random.uniform(2.0, 3.0))
                     
-            if not post_box:
-                # Strategy B: Click "Write something" button to open composer
-                write_selectors = [
-                    "//span[text()='Напишіть щось...']",
-                    "//span[text()='Напишите что-нибудь...']",
-                    "//span[text()='Write something...']",
-                    "//span[contains(text(), 'Напишіть')]",
-                    "//span[contains(text(), 'Напишите')]",
-                    "//span[contains(text(), 'Write something')]",
-                ]
-                
-                for sel in write_selectors:
-                    try:
-                        span = driver.find_element(By.XPATH, sel)
-                        # Click parent button
-                        parent = span.find_element(By.XPATH, "./ancestor::div[@role='button']")
-                        parent.click()
-                        logger.info(f"Clicked 'Write something' via: {sel}")
-                        time.sleep(random.uniform(2.0, 3.0))
-                        break
-                    except:
-                        continue
-                
-                # After clicking, find the popup textbox
-                for selector in [
-                    "//div[@role='dialog']//div[@contenteditable='true']",
-                    "//div[@role='textbox' and @contenteditable='true']",
-                    "//div[@contenteditable='true']",
-                ]:
-                    try:
-                        elements = driver.find_elements(By.XPATH, selector)
-                        for el in elements:
-                            if el.is_displayed():
-                                post_box = el
-                                logger.info(f"Found textbox after click via: {selector}")
-                                break
-                        if post_box:
-                            break
-                    except:
-                        continue
+                    # Now find the textbox in the popup
+                    post_box = WebDriverWait(driver, 8).until(
+                        EC.presence_of_element_located(
+                            (By.XPATH, "//div[@role='dialog']//div[@contenteditable='true' and contains(@class, 'notranslate')]")
+                        )
+                    )
+                    logger.info("Found textbox in dialog")
+                except:
+                    pass
             
             if not post_box:
-                return (False, "Could not find post composer in group")
+                # Strategy C: generic contenteditable anywhere
+                try:
+                    post_box = WebDriverWait(driver, 5).until(
+                        EC.presence_of_element_located(
+                            (By.XPATH, "//div[@contenteditable='true']")
+                        )
+                    )
+                    logger.info("Found fallback contenteditable")
+                except:
+                    pass
             
-            # STEP 4: Type the text
+            if not post_box:
+                return (False, "Could not find post composer (tried 3 strategies)")
+            
+            # STEP 4: Type/insert text
             try:
                 post_box.click()
                 time.sleep(0.5)
             except:
                 pass
             
-            for line in text.split('\n'):
-                post_box.send_keys(line)
-                time.sleep(random.uniform(0.05, 0.15))
-                post_box.send_keys(Keys.SHIFT + Keys.ENTER)
+            # Use JS to paste text via clipboard (much faster than send_keys line-by-line)
+            try:
+                # Place text in clipboard via JS
+                import pyperclip
+                pyperclip.copy(text)
+                post_box.send_keys(Keys.CONTROL, 'v')
+                time.sleep(1)
+            except ImportError:
+                # Fallback: send_keys line by line
+                logger.info("pyperclip not installed, using send_keys")
+                for line in text.split('\n'):
+                    post_box.send_keys(line)
+                    time.sleep(random.uniform(0.05, 0.1))
+                    post_box.send_keys(Keys.SHIFT + Keys.ENTER)
+            except Exception:
+                # Fallback: send_keys
+                for line in text.split('\n'):
+                    post_box.send_keys(line)
+                    time.sleep(random.uniform(0.05, 0.1))
+                    post_box.send_keys(Keys.SHIFT + Keys.ENTER)
             
             time.sleep(random.uniform(1.0, 2.0))
             
             # STEP 5: Upload photo
             if photo_path and os.path.exists(photo_path):
                 try:
-                    # Direct file upload - most reliable method
                     file_inputs = driver.find_elements(By.XPATH, "//input[@type='file']")
+                    uploaded = False
                     for fi in file_inputs:
                         try:
                             fi.send_keys(os.path.abspath(photo_path))
                             logger.info(f"Uploaded photo: {photo_path}")
                             time.sleep(random.uniform(3.0, 5.0))
+                            uploaded = True
                             break
                         except:
                             continue
-                    else:
-                        # Need to click photo button first
-                        try:
-                            photo_btn = driver.find_element(By.XPATH,
-                                "//div[@role='button']//span[text()='Фото']/..")
-                            photo_btn.click()
-                            time.sleep(2)
-                            fi = driver.find_element(By.XPATH, "//input[@type='file']")
-                            fi.send_keys(os.path.abspath(photo_path))
-                            time.sleep(3)
-                        except:
-                            logger.warning("Photo upload: button not found")
+                    if not uploaded:
+                        logger.warning("No file input found for photo")
                 except Exception as e:
                     logger.warning(f"Photo upload error: {e}")
             
@@ -235,10 +218,10 @@ class PostingEngine:
                 "//div[@aria-label='Опублікувати']",
                 "//div[@aria-label='Опубликовать']",
                 "//div[@aria-label='Post']",
-                "//span[text()='Опублікувати']",
-                "//span[text()='Опубликовать']",
-                "//span[text()='Publish']",
-                "//span[text()='Post']",
+                "//span[text()='Опублікувати']/ancestor::div[@role='button']",
+                "//span[text()='Опубликовать']/ancestor::div[@role='button']",
+                "//span[text()='Publish']/ancestor::div[@role='button']",
+                "//span[text()='Post']/ancestor::div[@role='button']",
             ]:
                 try:
                     btn = WebDriverWait(driver, 3).until(
@@ -246,7 +229,7 @@ class PostingEngine:
                     )
                     driver.execute_script("arguments[0].click();", btn)
                     publish_clicked = True
-                    logger.info(f"Clicked publish via: {selector}")
+                    logger.info(f"Clicked publish")
                     time.sleep(2)
                     break
                 except:
@@ -266,6 +249,15 @@ class PostingEngine:
             return (True, "Posted successfully")
             
         except Exception as e:
+            # Take screenshot for diagnostics
+            try:
+                screenshot_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'logs')
+                os.makedirs(screenshot_dir, exist_ok=True)
+                screenshot_path = os.path.join(screenshot_dir, f"error_{group_id_str}_{int(time.time())}.png")
+                driver.save_screenshot(screenshot_path)
+                logger.info(f"📸 Screenshot saved: {screenshot_path}")
+            except:
+                pass
             logger.error(f"Post error for {group_url}: {e}")
             return (False, str(e))
     
@@ -549,15 +541,15 @@ class PostingEngine:
                 if len(group_urls) >= max_groups:
                     break
                 
-                # Scroll down
-                driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                # Scroll inside the main FB content area (not just body)
+                driver.execute_script("""
+                    const main = document.querySelector('[role="main"]');
+                    if (main) main.scrollTo(0, main.scrollHeight);
+                    else window.scrollTo(0, document.body.scrollHeight);
+                """)
                 time.sleep(random.uniform(1.5, 2.5))
             
             logger.info(f"📋 Collected {len(group_urls)} clean group URLs")
-            for gu in group_urls[:5]:
-                logger.info(f"  • {gu}")
-            if len(group_urls) > 5:
-                logger.info(f"  ... and {len(group_urls) - 5} more")
             
         except Exception as e:
             logger.error(f"Error collecting groups from profile: {e}")
