@@ -18,10 +18,14 @@ from core.ixbrowser_client import test_connection
 from core.warmup import warmup_all_ready_accounts
 from core.posting_engine import PostingEngine
 from core.group_collector import collect_groups
+from core.process_manager import ProcessManager
 
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="FB Vacancy Bot")
+
+# Global process manager
+pm = ProcessManager()
 
 # Mount static files
 static_dir = Path(__file__).parent / "static"
@@ -273,6 +277,24 @@ def action_warmup():
     except Exception as e:
         logger.error(f"Warmup error: {e}")
         return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
+
+@app.get("/actions/status")
+def action_status():
+    """Get status of all running processes"""
+    return JSONResponse({
+        "processes": pm.list_processes(),
+    })
+
+
+@app.get("/actions/stop-all")
+def action_stop_all():
+    """Stop all running processes"""
+    count = pm.stop_all()
+    return JSONResponse({
+        "status": "ok",
+        "message": f"Stopped {count} processes",
+    })
 
 
 @app.get("/actions/collect-groups/{profile_id}")

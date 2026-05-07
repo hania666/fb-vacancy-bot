@@ -99,7 +99,10 @@
         </div>
 
         <div style="background: #1e293b; border-radius: 12px; padding: 20px; border: 1px solid #334155; margin-top: 16px;">
-            <h3 style="color: #f1f5f9; margin-bottom: 16px;">🤖 Автоматизация</h3>
+            <h3 style="color: #f1f5f9; margin-bottom: 16px;">🔄 Статус процессов <span id="process-status" style="font-size:13px;color:#64748b;font-weight:400;">(проверка...)</span></h3>
+            <div id="process-list" style="background: #0f172a; border-radius: 8px; padding: 12px; font-size: 13px; color: #94a3b8; margin-bottom: 12px;">
+                <span class="text-muted">Загрузка...</span>
+            </div>
             <div style="display: flex; gap: 12px; flex-wrap: wrap;">
                 <button class="btn btn-success" onclick="runAction('/actions/test-ix', 'Проверка iXBrowser...')">🔌 Проверить iXBrowser</button>
                 <button class="btn btn-success" onclick="runAction('/actions/warmup', 'Запуск прогрева...')">🔥 Прогреть аккаунты</button>
@@ -107,10 +110,44 @@
                 <button class="btn btn-success" onclick="promptPost()">📨 Рассылка (1 акк)</button>
                 <button class="btn btn-success" onclick="promptPostAll()">📨 Рассылка (все акки)</button>
             </div>
+            <div style="display: flex; gap: 12px; margin-top: 8px;">
+                <button class="btn btn-danger" onclick="runAction('/actions/stop-all', 'Остановка...')">⏹ Остановить всё</button>
+                <button class="btn btn-primary" onclick="refreshProcessStatus()">🔄 Обновить статус</button>
+            </div>
             <div id="action-result" style="margin-top: 12px; padding: 12px; background: #0f172a; border-radius: 8px; font-size: 13px; color: #64748b; white-space: pre-wrap; display: none;"></div>
         </div>
 
         <script>
+        async function refreshProcessStatus() {
+            const statusEl = document.getElementById('process-status');
+            const listEl = document.getElementById('process-list');
+            statusEl.textContent = '(проверка...)';
+            
+            try {
+                const resp = await fetch('/actions/status');
+                const data = await resp.json();
+                
+                statusEl.textContent = '(' + data.processes.length + ' активных)';
+                
+                if (data.processes.length === 0) {
+                    listEl.innerHTML = '<span style="color:#64748b;">⏸ Нет активных процессов</span>';
+                } else {
+                    listEl.innerHTML = data.processes.map(p => 
+                        '<div style="padding:4px 0;">' +
+                        '• ' + p.description + ' — <span style="color:' + (p.status === 'running' ? '#4ade80' : '#fbbf24') + '">' + p.status + '</span>' +
+                        ' (' + p.elapsed + ')' +
+                        '</div>'
+                    ).join('');
+                }
+            } catch (e) {
+                statusEl.textContent = '(ошибка)';
+                listEl.innerHTML = '<span style="color:#f87171;">Ошибка: ' + e.message + '</span>';
+            }
+        }
+        
+        // Auto-refresh every 5 seconds
+        setInterval(refreshProcessStatus, 5000);
+        
         async function runAction(url, label) {
             const resultDiv = document.getElementById('action-result');
             resultDiv.style.display = 'block';
@@ -140,6 +177,9 @@
             const vacId = prompt('ID вакансии:');
             if (vacId) runAction('/actions/post-all/' + vacId, 'Рассылка со всех акков...');
         }
+        
+        // Initial load
+        refreshProcessStatus();
         </script>
     </div>
 </body>
