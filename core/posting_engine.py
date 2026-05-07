@@ -527,9 +527,7 @@ class PostingEngine:
     def _collect_groups_from_profile(self, driver: Chrome, max_groups: int = 100) -> list:
         """
         Collect group URLs from the user's "My Groups" page.
-        
-        Navigates to https://facebook.com/groups/joins/?...
-        and scrapes all group links visible.
+        Already on groups/joins/ page when this is called.
         
         Returns:
             list of group URLs (strings)
@@ -537,46 +535,25 @@ class PostingEngine:
         group_urls = []
         
         try:
-            # Navigate to My Groups page
-            driver.get("https://www.facebook.com/groups/joins/?nav_source=tab&ordering=viewer_added")
-            time.sleep(random.uniform(4.0, 6.0))
-            
-            # Wait for page to load
-            WebDriverWait(driver, 15).until(
-                EC.presence_of_element_located((By.TAG_NAME, "body"))
-            )
-            
-            # Scroll down gradually to load more groups
-            last_height = 0
-            scroll_attempts = 0
-            max_scrolls = 20  # Prevent infinite scroll
-            
-            while scroll_attempts < max_scrolls:
-                # Find all group links on current page
-                group_links = driver.find_elements(By.XPATH,
-                    "//a[contains(@href, '/groups/') and contains(@href, '/') and not(contains(@href, '/groups/feed')) and not(contains(@href, '/groups/joins')) and not(contains(@href, 'manage'))]"
-                )
-                
-                for link in group_links:
-                    url = link.get_attribute("href")
-                    if url and url.startswith("https://www.facebook.com/groups/") and url not in group_urls:
-                        # Filter out non-group pages
-                        if not any(x in url for x in ['/feed/', '/joins/', '/discover/', '/create/', '/manage']):
-                            group_urls.append(url)
+            # Scroll a few times to load more groups
+            for scroll in range(10):
+                # Collect links visible so far
+                links = driver.find_elements(By.TAG_NAME, "a")
+                for link in links:
+                    try:
+                        url = link.get_attribute("href")
+                        if url and url.startswith("https://www.facebook.com/groups/") and url not in group_urls:
+                            if not any(x in url for x in ['/feed/', '/joins/', '/discover/']):
+                                group_urls.append(url)
+                    except:
+                        pass
                 
                 if len(group_urls) >= max_groups:
                     break
                 
                 # Scroll down
                 driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-                time.sleep(random.uniform(2.0, 3.0))
-                
-                new_height = driver.execute_script("return document.body.scrollHeight")
-                if new_height == last_height:
-                    scroll_attempts += 1
-                else:
-                    scroll_attempts = 0
-                last_height = new_height
+                time.sleep(random.uniform(1.5, 2.5))
             
             logger.info(f"📋 Collected {len(group_urls)} groups from profile")
             
@@ -630,7 +607,25 @@ class PostingEngine:
         }
         
         try:
-            # Step 1: Collect groups from profile
+            # Step 1: Navigate directly to My Groups page (no delay, no homepage)
+            logger.info("📋 Navigating to groups page...")
+            driver.get("https://www.facebook.com/groups/joins/?nav_source=tab&ordering=viewer_added")
+            
+            # Wait max 10s for body to load
+            try:
+                WebDriverWait(driver, 10).until(
+                    EC.presence_of_element_located((By.TAG_NAME, "body"))
+                )
+            except:
+                pass
+            
+            time.sleep(random.uniform(2.0, 3.0))
+            
+            # Check if we're logged in
+            if "login" in driver.current_url.lower():
+                return {"status": "error", "message": "Not logged in - Facebook login page detected"}
+            
+            # Step 2: Collect groups from the My Groups page
             logger.info("🔍 Collecting groups from profile...")
             group_urls = self._collect_groups_from_profile(driver, max_groups=max_posts)
             
