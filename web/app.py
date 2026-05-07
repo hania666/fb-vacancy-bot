@@ -139,10 +139,15 @@ def action_setup_cycles(account_id: int = Form(1), vacancy_id: int = Form(1)):
 
 def get_db():
     db = SessionLocal()
+    return db
+
+
+def close_db(db):
+    """Close a database session safely"""
     try:
-        return db
-    finally:
         db.close()
+    except:
+        pass
 
 
 # ---- Routes: Dashboard ----
@@ -466,16 +471,35 @@ def action_collect_groups(profile_id: str):
 
 @app.get("/actions/post/{account_id}/{vacancy_id}")
 def action_post(account_id: int, vacancy_id: int):
-    """Post a vacancy from one account"""
+    """Post a vacancy from one account (background)"""
     try:
-        engine = PostingEngine()
-        result = engine.run_posting_round(
-            account_id=account_id,
-            vacancy_id=vacancy_id,
-            groups_per_batch=10,
-            batches=10,
+        # Check if already running
+        for p in pm.list_processes():
+            if f"Рассылка акк #{account_id}" in p.get("description", ""):
+                return JSONResponse({
+                    "status": "already_running",
+                    "message": f"Рассылка для акк #{account_id} уже запущена!",
+                })
+        
+        def run():
+            engine = PostingEngine()
+            engine.run_posting_round(
+                account_id=account_id,
+                vacancy_id=vacancy_id,
+                groups_per_batch=10,
+                batches=10,
+            )
+        
+        proc = pm.start(
+            description=f"📨 Рассылка акк #{account_id}, вакансия #{vacancy_id}",
+            target=run,
         )
-        return JSONResponse(result)
+        
+        return JSONResponse({
+            "status": "started",
+            "message": f"Рассылка запущена в фоне (акк #{account_id})",
+            "process_id": proc.id,
+        })
     except Exception as e:
         logger.error(f"Post error: {e}")
         return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
@@ -483,11 +507,22 @@ def action_post(account_id: int, vacancy_id: int):
 
 @app.get("/actions/post-all/{vacancy_id}")
 def action_post_all(vacancy_id: int):
-    """Post from all ready accounts"""
+    """Post from all ready accounts (background)"""
     try:
-        engine = PostingEngine()
-        result = engine.run_all_accounts(vacancy_id=vacancy_id)
-        return JSONResponse(result)
+        def run():
+            engine = PostingEngine()
+            engine.run_all_accounts(vacancy_id=vacancy_id)
+        
+        proc = pm.start(
+            description=f"📨 Рассылка со всех акков, вакансия #{vacancy_id}",
+            target=run,
+        )
+        
+        return JSONResponse({
+            "status": "started",
+            "message": f"Рассылка со всех акков запущена в фоне!",
+            "process_id": proc.id,
+        })
     except Exception as e:
         logger.error(f"Post all error: {e}")
         return JSONResponse({"status": "error", "message": str(e)}, status_code=500)

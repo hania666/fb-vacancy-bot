@@ -69,6 +69,8 @@ class ProcessManager:
             # Wrap target to handle the stop flag
             def wrapped_target(stop_flag, *w_args, **w_kwargs):
                 try:
+                    # Pass stop_flag as keyword argument
+                    w_kwargs['stop_flag'] = stop_flag
                     target(*w_args, **w_kwargs)
                 except Exception as e:
                     logger.error(f"Process {pid} ({description}) failed: {e}")

@@ -81,7 +81,13 @@ def search_groups(driver: Chrome, query: str, max_groups: int = 30) -> list:
                 if not href or '/groups/' not in href:
                     continue
                 
-                # Clean up URL - preserve group ID\n                url = href.split('?')[0].rstrip('/')\n                # Keep facebook.com/groups/GROUP_ID\n                parts = url.split('/')\n                if len(parts) >= 5:\n                    url = '/'.join(parts[:5]) + '/'
+                # Clean up URL properly
+                # facebook.com/groups/123456/... -> facebook.com/groups/123456/
+                url = href.split('?')[0].rstrip('/')
+                parts = url.split('/')
+                # Take exactly facebook.com/groups/GROUP_ID
+                if len(parts) >= 5:
+                    url = '/'.join(parts[:5]) + '/'
                 
                 if url in seen_urls:
                     continue

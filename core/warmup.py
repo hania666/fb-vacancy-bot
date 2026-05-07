@@ -211,10 +211,10 @@ def visit_random_group(driver: Chrome, groups_urls: list):
             logger.info(f"📋 Joined group: {url}")
             random_sleep(2.0, 4.0)
             
-            # Confirm rules if needed
+            # Any of these in body means rules page
             try:
                 confirm = driver.find_element(By.XPATH,
-                    "//span[contains(text(), 'Ознакомлен' or text(), 'Accept' or text(), 'Підтвердити')]")
+                    "//span[contains(text(), 'Ознакомлен') or contains(text(), 'Accept') or contains(text(), 'Підтвердити')]")
                 confirm.click()
                 random_sleep(1.0, 2.0)
             except:
@@ -302,14 +302,15 @@ def run_warmup_session(
                 results["groups_visited"] += result
             
             elif activity == "browse_marketplace":
-                browse_marketplace(driver, chance=1.0)  # always, since we already chose it
+                        browse_marketplace(driver, chance=1.0)  # always, since we already chose it
             
             # Stay on page for a bit
             remaining = max(0, int(end_time - time.time()))
             if remaining > 30:
                 idle_time = min(remaining, random.randint(30, 120))
+                max_idle = min(idle_time + 10, remaining)
                 logger.info(f"⏳ Chill for {idle_time}s... ({remaining}s left)")
-                random_sleep(idle_time, idle_time + 10)
+                random_sleep(idle_time, max_idle)
             
             # Break if 30 seconds left
             if remaining < 30:
