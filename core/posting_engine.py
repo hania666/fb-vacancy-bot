@@ -466,25 +466,48 @@ class PostingEngine:
     
     def _collect_groups_from_profile(self, driver: Chrome, max_groups: int = 100) -> list:
         """
-        Collect group URLs from the user's "My Groups" page.
-        Already on groups/joins/ page when this is called.
-        
-        Returns:
-            list of group URLs (strings)
+        Collect group URLs from the user's "Your Groups" page.
+        Only collects direct group URLs like:
+        https://www.facebook.com/groups/123456789/
+        NOT group/feed/, group/joins/ etc.
         """
         group_urls = []
         
         try:
             # Scroll a few times to load more groups
             for scroll in range(10):
-                # Collect links visible so far
+                # Collect all links on page
                 links = driver.find_elements(By.TAG_NAME, "a")
+                
                 for link in links:
                     try:
-                        url = link.get_attribute("href")
-                        if url and url.startswith("https://www.facebook.com/groups/") and url not in group_urls:
-                            if not any(x in url for x in ['/feed/', '/joins/', '/discover/']):
-                                group_urls.append(url)
+                        href = link.get_attribute("href")
+                        if not href:
+                            continue
+                        
+                        # Must be a group URL
+                        if not href.startswith("https://www.facebook.com/groups/"):
+                            continue
+                        
+                        # Extract the part after /groups/
+                        rest = href.replace("https://www.facebook.com/groups/", "")
+                        
+                        # Direct group URL is facebook.com/groups/NUMBER/ or facebook.com/groups/NUMBER
+                        # Exclude feed, joins, search, discover etc.
+                        excluded = ['feed', 'joins', 'search', 'discover', 'manage', 
+                                    'create', 'saved', 'invite', 'requests', 'pending']
+                        
+                        # Get first path segment
+                        group_id = rest.split('/')[0]
+                        
+                        if not group_id or group_id in excluded:
+                            continue
+                        
+                        # Clean URL - remove query params, keep just the group
+                        clean_url = f"https://www.facebook.com/groups/{group_id}/"
+                        
+                        if clean_url not in group_urls:
+                            group_urls.append(clean_url)
                     except:
                         pass
                 
@@ -495,7 +518,11 @@ class PostingEngine:
                 driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
                 time.sleep(random.uniform(1.5, 2.5))
             
-            logger.info(f"📋 Collected {len(group_urls)} groups from profile")
+            logger.info(f"📋 Collected {len(group_urls)} clean group URLs")
+            for gu in group_urls[:5]:
+                logger.info(f"  • {gu}")
+            if len(group_urls) > 5:
+                logger.info(f"  ... and {len(group_urls) - 5} more")
             
         except Exception as e:
             logger.error(f"Error collecting groups from profile: {e}")
