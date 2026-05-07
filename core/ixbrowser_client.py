@@ -113,13 +113,29 @@ class IXBrowserClient:
             return None
 
     def open_profile_and_get_driver(self, profile_id) -> Optional[Chrome]:
-        """Open profile and return Selenium driver"""
+        """Open profile and return Selenium driver.
+        
+        First closes profile if already open, then opens fresh.
+        """
+        # Try to close first (ignore error if not open)
+        try:
+            self.close_profile(profile_id)
+            time.sleep(1)
+        except:
+            pass
+        
         open_result = self.open_profile(profile_id)
+        if not open_result:
+            # Try one more time
+            logger.warning(f"First attempt to open profile {profile_id} failed, retrying...")
+            time.sleep(2)
+            open_result = self.open_profile(profile_id)
+        
         if not open_result:
             logger.error(f"Failed to open profile {profile_id}: code={self.code}, msg={self.message}")
             return None
 
-        time.sleep(1)
+        time.sleep(2)
         return self.get_selenium_driver(open_result)
 
     # ---- Proxy Management ----
