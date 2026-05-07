@@ -108,6 +108,7 @@
                 <button class="btn btn-success" onclick="runAction('/actions/warmup', 'Запуск прогрева...')">🔥 Прогреть аккаунты</button>
                 <button class="btn btn-success" onclick="promptProfileAndCollect()">🔍 Собрать группы</button>
                 <button class="btn btn-success" onclick="promptPost()">📨 Рассылка (1 акк)</button>
+                <button class="btn btn-success" onclick="promptPostFromProfile()">📤 Из профиля (1 акк)</button>
                 <button class="btn btn-success" onclick="promptPostAll()">📨 Рассылка (все акки)</button>
                 <a href="/scheduler" class="btn btn-primary">⏰ Планировщик</a>
             </div>
@@ -172,6 +173,12 @@
             const accId = prompt('ID аккаунта:');
             const vacId = prompt('ID вакансии:');
             if (accId && vacId) runAction('/actions/post/' + accId + '/' + vacId, 'Рассылка...');
+        }
+        
+        async function promptPostFromProfile() {
+            const accId = prompt('ID аккаунта:');
+            const vacId = prompt('ID вакансии:');
+            if (accId && vacId) runAction('/actions/post-from-profile/' + accId + '/' + vacId, 'Рассылка из профиля...');
         }
         
         async function promptPostAll() {
