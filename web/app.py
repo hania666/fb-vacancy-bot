@@ -394,6 +394,30 @@ async def import_groups(file: UploadFile = File(...)):
     return RedirectResponse(f"/groups?imported={added}", status_code=303)
 
 
+@app.post("/groups/import-text")
+async def import_groups_text(urls: str = Form("")):
+    """Import groups from textarea (one URL per line)"""
+    lines = urls.strip().split("\n")
+    
+    db = get_db()
+    added = 0
+    for line in lines:
+        url = line.strip().rstrip('/')
+        # Clean URL: keep only facebook.com/groups/NUMBER
+        if url and url.startswith("http"):
+            # Make sure it ends with /
+            if not url.endswith('/'):
+                url += '/'
+            existing = db.query(Group).filter(Group.url == url).first()
+            if not existing:
+                group = Group(url=url)
+                db.add(group)
+                added += 1
+    db.commit()
+    db.close()
+    return RedirectResponse(f"/groups?imported={added}", status_code=303)
+
+
 # ---- Routes: Actions (Warmup / Post / Collect) ----
 
 @app.get("/actions/warmup")

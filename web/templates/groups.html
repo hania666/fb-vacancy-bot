@@ -45,13 +45,27 @@
     <div class="container">
         <h2>👥 Группы  <span class="badge">{{ total }} всего</span></h2>
 
-        <form action="/groups/add" method="post">
-            <h3>➕ Добавить группы</h3>
-            <input type="text" name="url" placeholder="Ссылка на группу FB">
-            <input type="text" name="name" placeholder="Название группы (необязательно)">
-            <input type="text" name="category" placeholder="Категория / город (необязательно)">
-            <button type="submit" class="btn btn-primary">Добавить</button>
-        </form>
+        <div style="display:flex; gap:16px; flex-wrap:wrap;">
+            <form action="/groups/add" method="post" style="flex:1; min-width:250px;">
+                <h3>➕ Добавить одну</h3>
+                <input type="text" name="url" placeholder="https://www.facebook.com/groups/...">
+                <input type="text" name="name" placeholder="Название">
+                <input type="text" name="category" placeholder="Категория / город">
+                <button type="submit" class="btn btn-primary">Добавить</button>
+            </form>
+
+            <form action="/groups/import-text" method="post" style="flex:2; min-width:350px;">
+                <h3>📋 Массовый импорт</h3>
+                <textarea name="urls" placeholder="Вставьте ссылки на группы (одна на строку):&#10;https://www.facebook.com/groups/123456/&#10;https://www.facebook.com/groups/789012/" style="min-height:120px; font-family:monospace; font-size:13px;"></textarea>
+                <button type="submit" class="btn btn-success">📥 Импортировать</button>
+            </form>
+
+            <form action="/groups/import" method="post" enctype="multipart/form-data" style="flex:1; min-width:250px;">
+                <h3>📁 Импорт из файла</h3>
+                <input type="file" name="file" accept=".txt,.csv">
+                <button type="submit" class="btn btn-success">📂 Загрузить файл</button>
+            </form>
+        </div>
 
         <table>
             <thead>
