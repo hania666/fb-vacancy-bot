@@ -40,6 +40,113 @@ def scroll_feed(driver: Chrome, scrolls: int = 3):
             random_sleep(1.0, 3.0)
 
 
+def watch_reels(driver: Chrome, max_reels: int = 3):
+    """Watch Facebook Reels (short videos) like a human"""
+    try:
+        # Try to navigate to Reels
+        reels_links = driver.find_elements(By.XPATH,
+            "//a[contains(@href, '/reel/') or contains(@aria-label, 'Reels') or contains(@aria-label, 'Рилсы')]")
+        
+        if reels_links:
+            # Click on a reel
+            reels_links[0].click()
+            random_sleep(2.0, 4.0)
+            
+            for i in range(max_reels):
+                # Watch the reel for a bit
+                watch_time = random.randint(5, 20)
+                logger.info(f"🎬 Watching Reel #{i+1} for {watch_time}s")
+                
+                # Scroll through reel comments sometimes
+                if random.random() < 0.3:
+                    driver.execute_script("window.scrollBy(0, 400);")
+                    random_sleep(2.0, 5.0)
+                    driver.execute_script("window.scrollBy(0, -400);")
+                
+                for _ in range(watch_time):
+                    time.sleep(1)
+                    # Check if stop was requested
+                    if hasattr(driver, '_stop_flag') and driver._stop_flag.is_set():
+                        return
+                
+                # Swipe to next reel (scroll down)
+                driver.execute_script("window.scrollBy(0, 600);")
+                random_sleep(1.0, 2.0)
+                
+                # Like some reels
+                if random.random() < 0.4:
+                    try:
+                        like_btn = driver.find_element(By.XPATH,
+                            "//div[@aria-label='Нравится' or @aria-label='Like' or @aria-label='Подобається']")
+                        like_btn.click()
+                        logger.info("👍 Liked a reel")
+                        random_sleep(1.0, 3.0)
+                    except:
+                        pass
+    except Exception as e:
+        logger.warning(f"Reels error: {e}")
+        # If reels fail, just go back to feed
+        try:
+            driver.get("https://www.facebook.com")
+            random_sleep(2.0, 4.0)
+        except:
+            pass
+
+
+def browse_groups(driver: Chrome, max_groups: int = 3):
+    """Visit and browse Facebook groups"""
+    visited = 0
+    for i in range(max_groups):
+        try:
+            # Navigate to Groups section
+            driver.get("https://www.facebook.com/groups/feed/")
+            random_sleep(3.0, 5.0)
+            
+            # Scroll through group feed
+            scroll_feed(driver, random.randint(2, 4))
+            
+            # Like some posts in groups
+            like_random_posts(driver, random.randint(1, 3))
+            
+            # Comment on a post sometimes
+            random_comment(driver, chance=0.2)
+            
+            visited += 1
+            logger.info(f"👥 Browsed group feed #{i+1}")
+            
+        except Exception as e:
+            logger.warning(f"Group browse error: {e}")
+    
+    return visited
+
+
+def browse_marketplace(driver: Chrome, chance: float = 0.3):
+    """Occasionally browse Facebook Marketplace"""
+    if random.random() > chance:
+        return
+    
+    try:
+        driver.get("https://www.facebook.com/marketplace")
+        random_sleep(3.0, 6.0)
+        
+        # Scroll through listings
+        scroll_feed(driver, random.randint(2, 4))
+        
+        # Click on a random item sometimes
+        if random.random() < 0.3:
+            items = driver.find_elements(By.XPATH, "//a[contains(@href, '/marketplace/item/')]")
+            if items:
+                items[0].click()
+                random_sleep(3.0, 6.0)
+                # Go back
+                driver.back()
+                random_sleep(2.0, 4.0)
+        
+        logger.info("🛒 Browsed Marketplace")
+    except Exception as e:
+        logger.warning(f"Marketplace error: {e}")
+
+
 def like_random_posts(driver: Chrome, max_likes: int = 3):
     """Like visible posts on the feed"""
     try:
@@ -144,6 +251,7 @@ def run_warmup_session(
         "status": "running",
         "scrolls": 0,
         "likes": 0,
+        "reels_watched": 0,
         "groups_visited": 0,
         "groups_joined": 0,
         "session_duration": 0,
@@ -157,29 +265,50 @@ def run_warmup_session(
         start_time = time.time()
         end_time = start_time + (duration_minutes * 60)
         
+        # Force close after duration (even if stuck)
+        deadline = end_time + 60  # 1 minute grace period
+        
         while time.time() < end_time:
-            # Scroll the feed
-            n_scrolls = random.randint(2, 5)
-            scroll_feed(driver, n_scrolls)
-            results["scrolls"] += n_scrolls
+            # Choose a random activity
+            activity = random.choices(
+                ["scroll_feed", "watch_reels", "browse_groups", "browse_marketplace"],
+                weights=[40, 25, 25, 10],  # вероятности
+                k=1
+            )[0]
             
-            # Like some posts
-            liked = like_random_posts(driver, random.randint(1, 4))
-            results["likes"] += liked
+            if activity == "scroll_feed":
+                # Scroll the feed
+                n_scrolls = random.randint(2, 5)
+                scroll_feed(driver, n_scrolls)
+                results["scrolls"] += n_scrolls
+                
+                # Like some posts
+                liked = like_random_posts(driver, random.randint(1, 4))
+                results["likes"] += liked
+                
+                # Sometimes comment
+                random_comment(driver, chance=0.15)
             
-            # Sometimes comment
-            random_comment(driver, chance=0.15)
+            elif activity == "watch_reels":
+                # Watch reels for a bit
+                n_reels = random.randint(1, 3)
+                watch_reels(driver, n_reels)
+                results["scrolls"] += n_reels * 2  # each reel swipe counts
             
-            # Sometimes visit a group
-            if groups_urls and random.random() < 0.3:
-                visit_random_group(driver, groups_urls)
-                results["groups_visited"] += 1
+            elif activity == "browse_groups":
+                # Browse groups
+                n_groups = random.randint(1, 2)
+                result = browse_groups(driver, n_groups)
+                results["groups_visited"] += result
+            
+            elif activity == "browse_marketplace":
+                browse_marketplace(driver, chance=1.0)  # always, since we already chose it
             
             # Stay on page for a bit
             remaining = max(0, int(end_time - time.time()))
             if remaining > 30:
                 idle_time = min(remaining, random.randint(30, 120))
-                logger.info(f"⏳ Idle for {idle_time}s... ({remaining}s left)")
+                logger.info(f"⏳ Chill for {idle_time}s... ({remaining}s left)")
                 random_sleep(idle_time, idle_time + 10)
             
             # Break if 30 seconds left
@@ -187,25 +316,28 @@ def run_warmup_session(
                 break
         
         # 2. Save updated cookies to database
-        cookies = client.get_cookies(profile_id)
-        if cookies:
-            db = SessionLocal()
-            account = db.query(Account).filter(Account.id == account_id).first()
-            if account:
-                # Convert cookies to serializable format
-                serializable = []
-                for c in cookies:
-                    if isinstance(c, dict):
-                        serializable.append({
-                            "name": c.get("name"),
-                            "value": c.get("value"),
-                            "domain": c.get("domain"),
-                            "path": c.get("path"),
-                        })
-                account.cookies = serializable
-                account.last_active_at = datetime.utcnow()
-                db.commit()
-            db.close()
+        try:
+            cookies = client.get_cookies(profile_id)
+            if cookies:
+                db = SessionLocal()
+                account = db.query(Account).filter(Account.id == account_id).first()
+                if account:
+                    # Convert cookies to serializable format
+                    serializable = []
+                    for c in cookies:
+                        if isinstance(c, dict):
+                            serializable.append({
+                                "name": c.get("name"),
+                                "value": c.get("value"),
+                                "domain": c.get("domain"),
+                                "path": c.get("path"),
+                            })
+                    account.cookies = serializable
+                    account.last_active_at = datetime.utcnow()
+                    db.commit()
+                db.close()
+        except Exception as e:
+            logger.warning(f"Failed to save cookies: {e}")
         
         results["status"] = "success"
         results["session_duration"] = int(time.time() - start_time)
