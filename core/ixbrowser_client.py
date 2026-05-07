@@ -44,7 +44,6 @@ class IXBrowserClient:
 
     def get_profile_info(self, profile_id) -> Optional[dict]:
         """Get profile info by ID"""
-        # get_profile_list can be filtered by profile_id
         data = self._client.get_profile_list(profile_id=profile_id)
         self.code = self._client.code
         self.message = self._client.message
@@ -65,7 +64,7 @@ class IXBrowserClient:
         return data
 
     def close_profile(self, profile_id) -> bool:
-        """Close a profile"""
+        """Close a profile via API"""
         data = self._client.close_profile(int(profile_id))
         self.code = self._client.code
         self.message = self._client.message
@@ -115,19 +114,38 @@ class IXBrowserClient:
     def open_profile_and_get_driver(self, profile_id) -> Optional[Chrome]:
         """Open profile and return Selenium driver.
         
-        First closes profile if already open, then opens fresh.
+        If a driver for this profile already exists, reuse it.
+        Otherwise close any existing profile instances, then open fresh.
         """
-        # Try to close first (ignore error if not open)
-        try:
-            self.close_profile(profile_id)
-            time.sleep(1)
-        except:
-            pass
+        # Check if profile already has an open session
+        opened = self._client.get_opened_profile_list()
+        self.code = self._client.code
+        self.message = self._client.message
         
+        already_open = False
+        if opened:
+            for p in opened:
+                if str(p.get('profile_id', '')) == str(profile_id):
+                    already_open = True
+                    break
+        
+        if already_open:
+            logger.info(f"Profile {profile_id} already open, reusing")
+            # Get the open result by opening again (ixBrowser returns existing debug address)
+            open_result = self.open_profile(profile_id)
+            if open_result:
+                return self.get_selenium_driver(open_result)
+            return None
+        
+        # Close any lingering sessions first
+        logger.info(f"Closing any existing instances of profile {profile_id}")
+        self.close_profile(profile_id)
+        time.sleep(1)
+        
+        # Open fresh
         open_result = self.open_profile(profile_id)
         if not open_result:
-            # Try one more time
-            logger.warning(f"First attempt to open profile {profile_id} failed, retrying...")
+            logger.warning(f"First attempt failed, retrying...")
             time.sleep(2)
             open_result = self.open_profile(profile_id)
         
