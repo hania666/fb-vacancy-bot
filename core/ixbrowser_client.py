@@ -114,20 +114,49 @@ class IXBrowserClient:
     def open_profile_and_get_driver(self, profile_id) -> Optional[Chrome]:
         """Open profile and return Selenium driver.
         
-        Always opens a fresh profile - closes any existing instance first.
+        Strategy:
+        1. Check if this profile is already open in iXBrowser
+        2. If open and debugging port works → connect to existing window (NO new tabs)
+        3. If not open → close any stale instances, open fresh
         """
-        # Close any existing instance (ignore errors)
+        pid = int(profile_id)
+        
+        # Step 1: Check if profile is already open
         try:
-            logger.info(f"Closing any existing instances of profile {profile_id}...")
+            opened = self._client.get_opened_profile_list()
+            logger.info(f"Opened profiles: {opened}")
+            
+            if opened:
+                for p in opened:
+                    p_id = p.get("profile_id")
+                    # Try to match by profile_id (could be int, string, or nested)
+                    if str(p_id) == str(pid) or str(p.get("id", "")) == str(pid):
+                        debug_addr = p.get("debugging_address")
+                        if debug_addr:
+                            logger.info(f"✅ Profile {profile_id} already open at {debug_addr}")
+                            # Connect to existing window - NO new opening
+                            chrome_options = Options()
+                            chrome_options.add_experimental_option("debuggerAddress", debug_addr)
+                            try:
+                                driver = Chrome(options=chrome_options)
+                                logger.info(f"✅ Connected to existing profile {profile_id}")
+                                return driver
+                            except Exception as e:
+                                logger.warning(f"Could not connect to existing: {e}")
+                        break
+        except Exception as e:
+            logger.warning(f"Error checking opened profiles: {e}")
+        
+        # Step 2: Close any existing instances first
+        try:
             self.close_profile(profile_id)
             time.sleep(2)
         except:
             pass
         
-        # Wait a moment for Chrome to fully close  
         time.sleep(1)
         
-        # Open fresh
+        # Step 3: Open fresh
         open_result = self.open_profile(profile_id)
         if not open_result:
             logger.warning(f"First attempt failed, retrying...")
@@ -138,12 +167,11 @@ class IXBrowserClient:
             logger.error(f"Failed to open profile {profile_id}: code={self.code}, msg={self.message}")
             return None
         
-        # Wait for Chrome to start
         time.sleep(3)
         
         driver = self.get_selenium_driver(open_result)
         if driver:
-            logger.info(f"✅ Driver connected for profile {profile_id}")
+            logger.info(f"✅ Opened and connected to new profile {profile_id}")
         else:
             logger.error(f"❌ Failed to create driver for profile {profile_id}")
         return driver
