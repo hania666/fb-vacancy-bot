@@ -97,6 +97,50 @@
                 <a href="/groups" class="btn btn-primary">👥 Добавить группы</a>
             </div>
         </div>
+
+        <div style="background: #1e293b; border-radius: 12px; padding: 20px; border: 1px solid #334155; margin-top: 16px;">
+            <h3 style="color: #f1f5f9; margin-bottom: 16px;">🤖 Автоматизация</h3>
+            <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+                <button class="btn btn-success" onclick="runAction('/actions/test-ix', 'Проверка iXBrowser...')">🔌 Проверить iXBrowser</button>
+                <button class="btn btn-success" onclick="runAction('/actions/warmup', 'Запуск прогрева...')">🔥 Прогреть аккаунты</button>
+                <button class="btn btn-success" onclick="promptProfileAndCollect()">🔍 Собрать группы</button>
+                <button class="btn btn-success" onclick="promptPost()">📨 Рассылка (1 акк)</button>
+                <button class="btn btn-success" onclick="promptPostAll()">📨 Рассылка (все акки)</button>
+            </div>
+            <div id="action-result" style="margin-top: 12px; padding: 12px; background: #0f172a; border-radius: 8px; font-size: 13px; color: #64748b; white-space: pre-wrap; display: none;"></div>
+        </div>
+
+        <script>
+        async function runAction(url, label) {
+            const resultDiv = document.getElementById('action-result');
+            resultDiv.style.display = 'block';
+            resultDiv.textContent = '🔄 ' + label + '...';
+            
+            try {
+                const resp = await fetch(url);
+                const data = await resp.json();
+                resultDiv.textContent = '✅ ' + label + ' завершено\n' + JSON.stringify(data, null, 2);
+            } catch (e) {
+                resultDiv.textContent = '❌ Ошибка: ' + e.message;
+            }
+        }
+        
+        function promptProfileAndCollect() {
+            const id = prompt('ID профиля iXBrowser для сбора групп:');
+            if (id) runAction('/actions/collect-groups/' + encodeURIComponent(id), 'Сбор групп...');
+        }
+        
+        async function promptPost() {
+            const accId = prompt('ID аккаунта:');
+            const vacId = prompt('ID вакансии:');
+            if (accId && vacId) runAction('/actions/post/' + accId + '/' + vacId, 'Рассылка...');
+        }
+        
+        async function promptPostAll() {
+            const vacId = prompt('ID вакансии:');
+            if (vacId) runAction('/actions/post-all/' + vacId, 'Рассылка со всех акков...');
+        }
+        </script>
     </div>
 </body>
 </html>
