@@ -502,12 +502,16 @@ def action_post_from_profile(account_id: int, vacancy_id: int):
     Runs in background - check status at /actions/status
     """
     try:
-        # Generate unique process ID
-        pid = f"post_profile_{account_id}_{vacancy_id}_{int(datetime.utcnow().timestamp())}"
+        # Check if this account already has a posting process running
+        for p in pm.list_processes():
+            if "Постинг" in p.get("description", "") and str(account_id) in p.get("description", ""):
+                return JSONResponse({
+                    "status": "already_running",
+                    "message": f"Рассылка для акк #{account_id} уже запущена!",
+                })
         
-        def run_in_background():
-            """Run posting in background thread"""
-            from core.posting_engine import PostingEngine
+        def run_in_background(driver_to_use=None):
+            """Run posting in background"""
             engine = PostingEngine()
             result = engine.run_posting_from_profile(
                 account_id=account_id,
@@ -516,17 +520,15 @@ def action_post_from_profile(account_id: int, vacancy_id: int):
             )
             return result
         
-        pm = ProcessManager()
-        pm.start_process(
-            pid=pid,
-            description=f"Постинг из профиля: акк #{account_id}, вакансия #{vacancy_id}",
+        proc = pm.start(
+            description=f"📤 Постинг из профиля: акк #{account_id}",
             target=run_in_background,
         )
         
         return JSONResponse({
             "status": "started",
-            "message": f"Рассылка запущена в фоне. Следи за статусом на главной.",
-            "process_id": pid,
+            "message": f"Рассылка для акк #{account_id} запущена в фоне!",
+            "process_id": proc.id,
         })
     except Exception as e:
         logger.error(f"Post from profile error: {e}")
