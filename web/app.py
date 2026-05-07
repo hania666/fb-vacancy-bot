@@ -43,6 +43,9 @@ templates = Jinja2Templates(directory=str(templates_dir))
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 TEMPLATES_DIR.mkdir(parents=True, exist_ok=True)
 
+# Mount uploads directory for serving photos
+app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
+
 
 @app.on_event("startup")
 def startup():
@@ -168,6 +171,7 @@ async def add_vacancy(
     photo: UploadFile = File(None),
 ):
     photo_path = ""
+    url_path = ""
     if photo and photo.filename:
         # Save with timestamp to avoid conflicts
         ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
@@ -177,12 +181,13 @@ async def add_vacancy(
         with open(file_path, "wb") as f:
             f.write(content)
         photo_path = str(file_path)
+        url_path = f"/uploads/{safe_filename}"
 
     db = get_db()
     vacancy = Vacancy(
         title=title,
         description=description,
-        photo_path=photo_path,
+        photo_path=url_path or photo_path,
     )
     db.add(vacancy)
     db.commit()
@@ -225,7 +230,7 @@ async def edit_vacancy(
             content = await photo.read()
             with open(file_path, "wb") as f:
                 f.write(content)
-            vacancy.photo_path = str(file_path)
+            vacancy.photo_path = f"/uploads/{safe_filename}"
         
         db.commit()
     db.close()
