@@ -81,212 +81,152 @@ class PostingEngine:
     def _post_to_group(self, driver: Chrome, group_url: str,
                        text: str, photo_path: str = None) -> tuple:
         """
-        Post to a single Facebook group using real FB selectors.
+        Post to a single Facebook group.
         
-        Flow (based on user's manual test):
-        1. Navigate to group
-        2. Click "Переглянути групу" (View Group) if present
-        3. Click "Напишіть щось..." (Write something) to open post composer
-        4. Type text into the contenteditable <p> element
-        5. Upload photo via photo button
-        6. Click "Опублікувати" (Publish)
-        7. Return to groups list, repeat
+        Flow:
+        1. Navigate directly to group URL
+        2. If "View Group" button appears, click it
+        3. Find the post creation area on the group page
+        4. Type text and upload photo
+        5. Click Publish
         
-        Returns:
-            (success: bool, message: str)
+        The post composer inside a group page is different from the main feed!
         """
         try:
-            # STEP 1: Navigate to group
-            driver.get(f"{group_url}")
+            # STEP 1: Navigate to group page
+            logger.info(f"Navigating to group: {group_url}")
+            driver.get(group_url)
             time.sleep(random.uniform(3.0, 5.0))
             
-            # Wait for body to load
-            WebDriverWait(driver, 15).until(
-                EC.presence_of_element_located((By.TAG_NAME, "body"))
-            )
-            
-            # STEP 2: Click "Переглянути групу" (View Group) if present
+            # STEP 2: Click "Переглянути групу" if present
             try:
                 view_group_btn = driver.find_element(By.XPATH,
-                    "//span[contains(text(), 'Переглянути групу') or contains(text(), 'View Group') or contains(text(), 'Перейти до групи')]")
+                    "//span[contains(text(), 'Переглянути групу') or contains(text(), 'View Group')]")
                 view_group_btn.click()
                 time.sleep(random.uniform(2.0, 3.0))
                 logger.info("Clicked 'View Group' button")
             except:
                 pass
             
-            # STEP 3: Click "Напишіть щось..." to open the post composer
-            post_composer_selectors = [
-                # Ukrainian: Напишіть щось...
-                "//span[contains(text(), 'Напишіть щось')]",
-                # Russian: Напишите что-нибудь...
-                "//span[contains(text(), 'Напишите что-нибудь')]",
-                # English: Write something...
-                "//span[contains(text(), 'Write something')]",
-                # Generic
-                "//span[contains(@class, 'x1lliihq') and contains(text(), 'Напиш')]",
-                "//span[contains(@class, 'x1lliihq') and contains(text(), 'Write')]",
-            ]
-            
-            composer_clicked = False
-            for selector in post_composer_selectors:
-                try:
-                    span = driver.find_element(By.XPATH, selector)
-                    # Click the parent clickable div (role="button")
-                    parent_button = span.find_element(By.XPATH,
-                        "./ancestor::div[@role='button']")
-                    parent_button.click()
-                    composer_clicked = True
-                    logger.info(f"Opened post composer via: {selector}")
-                    time.sleep(random.uniform(2.0, 3.0))
-                    break
-                except:
-                    continue
-            
-            if not composer_clicked:
-                return (False, "Could not open post composer (Напишіть щось... button)")
-            
-            # STEP 4: Find the text input area (contenteditable div inside dialog)
-            text_input_selectors = [
-                # The actual typing area after popup opens
-                "//div[@role='dialog']//div[@contenteditable='true']",
+            # STEP 3: Find the post creation area on the GROUP page
+            # Inside a group, there's a different composer than on the main feed
+            post_box_selectors = [
+                # Group page composer - Ukrainian
+                "//div[@aria-label='Створити допис']",
                 "//div[@aria-label='Напишіть щось...']",
+                # Group page composer - Russian
+                "//div[@aria-label='Создать публикацию']",
                 "//div[@aria-label='Напишите что-нибудь...']",
+                # Group page composer - English
+                "//div[@aria-label='Create a post']",
                 "//div[@aria-label='Write something...']",
-                # Fallback: any contenteditable div
+                # Any contenteditable div inside the group
+                "//form//div[@contenteditable='true']",
+                "//div[@role='dialog']//div[@contenteditable='true']",
+                # Generic contenteditable
                 "//div[@contenteditable='true' and contains(@class, 'notranslate')]",
                 "//div[@contenteditable='true']",
             ]
             
-            text_input = None
-            for selector in text_input_selectors:
+            post_box = None
+            for selector in post_box_selectors:
                 try:
-                    text_input = WebDriverWait(driver, 5).until(
-                        EC.element_to_be_clickable((By.XPATH, selector))
-                    )
-                    if text_input:
-                        logger.info(f"Found text input via: {selector}")
+                    post_box = driver.find_element(By.XPATH, selector)
+                    if post_box and post_box.is_displayed():
+                        logger.info(f"Found post box via: {selector}")
                         break
                 except:
                     continue
             
-            if not text_input:
-                return (False, "Could not find text input area in dialog")
+            if not post_box:
+                # Try clicking the "Write something" span to open the composer
+                try:
+                    write_span = driver.find_element(By.XPATH,
+                        "//span[contains(text(), 'Напишіть щось') or contains(text(), 'Напишите что-нибудь') or contains(text(), 'Write something')]")
+                    write_span.click()
+                    time.sleep(2)
+                    
+                    # Try again
+                    for selector in post_box_selectors:
+                        try:
+                            post_box = driver.find_element(By.XPATH, selector)
+                            if post_box and post_box.is_displayed():
+                                break
+                        except:
+                            continue
+                except:
+                    pass
             
-            # Click and type the text
-            text_input.click()
-            time.sleep(0.5)
+            if not post_box:
+                return (False, "Could not find post input box on group page")
             
-            # Type text human-like (line by line)
+            # STEP 4: Click to focus and type text
+            post_box.click()
+            time.sleep(1)
+            
+            # Type text with human-like delays
             for line in text.split('\n'):
-                text_input.send_keys(line)
+                post_box.send_keys(line)
                 time.sleep(random.uniform(0.08, 0.2))
-                text_input.send_keys(Keys.SHIFT + Keys.ENTER)
+                post_box.send_keys(Keys.SHIFT + Keys.ENTER)
             
             time.sleep(random.uniform(1.0, 2.0))
             
             # STEP 5: Upload photo
             if photo_path and os.path.exists(photo_path):
                 try:
-                    # Click photo button in the post popup
-                    photo_btn_selectors = [
-                        # Ukrainian: Фото
-                        "//div[@role='button']//span[contains(text(), 'Фото') and not(contains(text(), 'Відео'))]",
-                        # Russian: Фото  
-                        "//div[@role='button']//span[contains(text(), 'Фото')]",
-                        # English: Photo
-                        "//div[@role='button']//span[contains(text(), 'Photo')]",
-                        # The actual webp icon button
-                        "//img[contains(@src, 'photo')]/ancestor::div[@role='button']",
-                    ]
-                    
-                    photo_clicked = False
-                    for selector in photo_btn_selectors:
-                        try:
-                            photo_btn = driver.find_element(By.XPATH, selector)
-                            parent_btn = photo_btn.find_element(By.XPATH,
-                                "./ancestor::div[@role='button']")
-                            parent_btn.click()
-                            photo_clicked = True
-                            logger.info("Clicked photo button")
-                            time.sleep(random.uniform(2.0, 3.0))
-                            break
-                        except:
-                            continue
-                    
-                    if photo_clicked:
-                        # Find file input
-                        file_input = driver.find_element(By.XPATH,
-                            "//input[@type='file']")
-                        abs_path = os.path.abspath(photo_path)
-                        file_input.send_keys(abs_path)
-                        logger.info(f"Uploaded photo: {abs_path}")
-                        time.sleep(random.uniform(3.0, 5.0))
-                    else:
-                        # Direct file input
-                        try:
-                            file_input = driver.find_element(By.XPATH,
-                                "//input[@type='file' and contains(@accept, 'image')]")
-                            abs_path = os.path.abspath(photo_path)
-                            file_input.send_keys(abs_path)
-                            logger.info(f"Uploaded photo directly: {abs_path}")
+                    # Find file input that accepts images
+                    file_inputs = driver.find_elements(By.XPATH, "//input[@type='file']")
+                    for fi in file_inputs:
+                        accept = fi.get_attribute("accept") or ""
+                        if "image" in accept.lower() or "photo" in accept.lower():
+                            fi.send_keys(os.path.abspath(photo_path))
+                            logger.info(f"Uploaded photo via file input")
                             time.sleep(random.uniform(3.0, 5.0))
-                        except:
-                            logger.warning("Could not find photo upload method")
-                            
+                            break
+                    else:
+                        # Try clicking the photo icon button
+                        photo_btn = driver.find_element(By.XPATH,
+                            "//div[@role='button']//span[contains(text(), 'Фото')] | //div[contains(@aria-label, 'Фото') and @role='button'] | //div[contains(@aria-label, 'Photo') and @role='button']")
+                        photo_btn.click()
+                        time.sleep(2)
+                        file_input = driver.find_element(By.XPATH, "//input[@type='file']")
+                        file_input.send_keys(os.path.abspath(photo_path))
+                        time.sleep(random.uniform(3.0, 5.0))
                 except Exception as e:
                     logger.warning(f"Photo upload failed: {e}")
-                    # Continue without photo
             
-            # STEP 6: Click "Опублікувати" (Publish) button
-            time.sleep(random.uniform(1.0, 2.0))
+            # STEP 6: Click Publish
+            time.sleep(1)
             
             submit_selectors = [
-                # Ukrainian: Опублікувати
                 "//span[contains(text(), 'Опублікувати')]",
-                # Russian: Опубликовать
                 "//span[contains(text(), 'Опубликовать')]",
-                # English: Publish
-                "//span[contains(text(), 'Publish') and not(contains(text(), 'Photo'))]",
-                # English: Post
-                "//span[contains(text(), 'Post') and not(contains(text(), 'Photo'))]",
-                # Inside dialog
-                "//div[@role='dialog']//span[contains(text(), 'Опублікувати')]",
-                "//div[@role='dialog']//span[contains(text(), 'Publish')]",
+                "//span[contains(text(), 'Publish')]",
+                "//span[contains(text(), 'Post')]",
             ]
             
             submitted = False
             for selector in submit_selectors:
                 try:
-                    publish_btn = WebDriverWait(driver, 5).until(
-                        EC.element_to_be_clickable((By.XPATH, selector))
-                    )
-                    publish_btn.click()
-                    submitted = True
-                    logger.info(f"Clicked publish via: {selector}")
-                    time.sleep(random.uniform(2.0, 4.0))
-                    break
+                    publish_btn = driver.find_element(By.XPATH, selector)
+                    if publish_btn.is_displayed() and publish_btn.is_enabled():
+                        publish_btn.click()
+                        submitted = True
+                        logger.info(f"Clicked publish")
+                        time.sleep(2)
+                        break
                 except:
                     continue
             
             if not submitted:
-                # Last resort: Ctrl+Enter
-                try:
-                    text_input.send_keys(Keys.CONTROL + Keys.ENTER)
-                    submitted = True
-                    time.sleep(2)
-                except:
-                    pass
+                post_box.send_keys(Keys.CONTROL + Keys.ENTER)
+                time.sleep(2)
             
-            if not submitted:
-                return (False, "Could not find publish button (Опублікувати)")
-            
-            # STEP 7: Ban detection
+            # Check for ban
             current_url = driver.current_url.lower()
             if "checkpoint" in current_url:
                 return (False, "Account checkpoint - needs verification")
-            if "blocked" in current_url or "restricted" in current_url:
-                return (False, "Account restricted or blocked")
             
             return (True, "Posted successfully")
             
@@ -691,26 +631,11 @@ class PostingEngine:
                 
                 results["total_posts"] += 1
                 
-                # Return to "My Groups" page for next post
+                # Just delay between posts - no navigation back
                 if idx < len(group_urls) - 1:
-                    # Random delay
                     delay = random.randint(self.MIN_DELAY_BETWEEN_POSTS, self.MAX_DELAY_BETWEEN_POSTS)
                     logger.info(f"⏳ Waiting {delay}s before next post...")
                     time.sleep(delay)
-                    
-                    # Navigate back to groups list for the next group
-                    # (posting already returns us there)
-                    if idx % 5 == 4:  # Every 5 posts, refresh the groups page
-                        driver.get("https://www.facebook.com/groups/joins/?nav_source=tab&ordering=viewer_added")
-                        time.sleep(random.uniform(3.0, 5.0))
-                    else:
-                        # Just go back
-                        try:
-                            driver.back()
-                            time.sleep(random.uniform(2.0, 3.0))
-                        except:
-                            driver.get("https://www.facebook.com/groups/joins/?nav_source=tab&ordering=viewer_added")
-                            time.sleep(random.uniform(3.0, 5.0))
             
             logger.info(f"✅ Done! {results['successful']} successful, {results['failed']} failed")
             
