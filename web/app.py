@@ -481,7 +481,7 @@ def action_post(account_id: int, vacancy_id: int):
                     "message": f"Рассылка для акк #{account_id} уже запущена!",
                 })
         
-        def run():
+        def run(**kwargs):
             engine = PostingEngine()
             engine.run_posting_round(
                 account_id=account_id,
@@ -509,7 +509,7 @@ def action_post(account_id: int, vacancy_id: int):
 def action_post_all(vacancy_id: int):
     """Post from all ready accounts (background)"""
     try:
-        def run():
+        def run(**kwargs):
             engine = PostingEngine()
             engine.run_all_accounts(vacancy_id=vacancy_id)
         
