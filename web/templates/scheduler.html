@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Расписание — FB Vacancy Bot</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
+        .nav { background: #1e293b; padding: 16px 24px; display: flex; gap: 24px; align-items: center; border-bottom: 1px solid #334155; }
+        .nav a { color: #94a3b8; text-decoration: none; font-size: 14px; font-weight: 500; padding: 8px 12px; border-radius: 6px; transition: all 0.2s; }
+        .nav a:hover { color: #fff; background: #334155; }
+        .nav a.active { color: #3b82f6; background: #1e3a5f; }
+        .nav .title { color: #fff; font-size: 18px; font-weight: 700; margin-right: auto; }
+        .container { max-width: 900px; margin: 0 auto; padding: 32px 24px; }
+        h2 { margin-bottom: 20px; font-size: 24px; color: #f1f5f9; }
+        .btn { display: inline-block; padding: 8px 16px; border-radius: 8px; font-size: 14px; font-weight: 500; text-decoration: none; cursor: pointer; border: none; transition: all 0.2s; }
+        .btn-primary { background: #3b82f6; color: #fff; }
+        .btn-primary:hover { background: #2563eb; }
+        .btn-success { background: #22c55e; color: #fff; }
+        .btn-success:hover { background: #16a34a; }
+        .btn-danger { background: #ef4444; color: #fff; }
+        .btn-danger:hover { background: #dc2626; }
+        .btn-sm { padding: 4px 10px; font-size: 12px; }
+        .card { background: #1e293b; border-radius: 12px; padding: 24px; border: 1px solid #334155; margin-bottom: 20px; }
+        .card h3 { color: #f1f5f9; margin-bottom: 16px; font-size: 16px; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        @media (max-width: 700px) { .grid { grid-template-columns: 1fr; } }
+        form { display: flex; flex-direction: column; gap: 12px; }
+        form label { color: #94a3b8; font-size: 13px; font-weight: 500; }
+        form input, form select { background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 10px 14px; color: #e2e8f0; font-size: 14px; width: 100%; }
+        form input:focus, form select:focus { outline: none; border-color: #3b82f6; }
+        .row { display: flex; gap: 12px; }
+        .row input, .row select { flex: 1; }
+        table { width: 100%; border-collapse: collapse; background: #1e293b; border-radius: 12px; overflow: hidden; }
+        th, td { padding: 12px 16px; text-align: left; border-bottom: 1px solid #334155; font-size: 14px; }
+        th { background: #0f172a; color: #64748b; font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; }
+        td { color: #cbd5e1; }
+        tr:hover td { background: #253347; }
+        .status-badge { display: inline-block; padding: 2px 10px; border-radius: 10px; font-size: 12px; font-weight: 600; }
+        .status-badge.running { background: #052e16; color: #4ade80; }
+        .status-badge.stopped { background: #450a0a; color: #f87171; }
+        .text-muted { color: #64748b; font-size: 13px; }
+        #scheduler-status { margin-bottom: 16px; }
+    </style>
+</head>
+<body>
+    <nav class="nav">
+        <span class="title">📦 FB Vacancy Bot</span>
+        <a href="/">Главная</a>
+        <a href="/accounts">Аккаунты</a>
+        <a href="/groups">Группы</a>
+        <a href="/vacancies">Вакансии</a>
+        <a href="/scheduler" class="active">⏰ Расписание</a>
+        <a href="/stats">Статистика</a>
+    </nav>
+    <div class="container">
+        <h2>⏰ Планировщик</h2>
+
+        <div id="scheduler-status" class="card">
+            <h3>Статус планировщика</h3>
+            <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+                <span id="status-badge" class="status-badge stopped">⏹ Остановлен</span>
+                <button class="btn btn-success btn-sm" onclick="schedulerStart()">▶ Запустить</button>
+                <button class="btn btn-danger btn-sm" onclick="schedulerStop()">⏹ Остановить</button>
+                <button class="btn btn-primary btn-sm" onclick="refreshStatus()">🔄 Обновить</button>
+            </div>
+        </div>
+
+        <div class="grid">
+            <div class="card">
+                <h3>🔥 Добавить прогрев</h3>
+                <form id="warmup-form" onsubmit="addWarmup(event)">
+                    <label>Аккаунт</label>
+                    <select name="account_id">
+                        <option value="0">Все аккаунты</option>
+                        <option value="1">#1 (voronov...)</option>
+                    </select>
+                    <div class="row">
+                        <div>
+                            <label>Час (0-23)</label>
+                            <input type="number" name="hour" value="10" min="0" max="23">
+                        </div>
+                        <div>
+                            <label>Минуты</label>
+                            <input type="number" name="minute" value="0" min="0" max="59">
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-success">➕ Добавить</button>
+                </form>
+            </div>
+
+            <div class="card">
+                <h3>📨 Добавить рассылку</h3>
+                <form id="post-form" onsubmit="addPost(event)">
+                    <label>ID вакансии</label>
+                    <input type="number" name="vacancy_id" value="1" min="1">
+                    <div class="row">
+                        <div>
+                            <label>Час (0-23)</label>
+                            <input type="number" name="hour" value="12" min="0" max="23">
+                        </div>
+                        <div>
+                            <label>Минуты</label>
+                            <input type="number" name="minute" value="0" min="0" max="59">
+                        </div>
+                    </div>
+                    <label style="display:flex;align-items:center;gap:8px;">
+                        <input type="checkbox" name="all_accounts" checked>
+                        Со всех аккаунтов
+                    </label>
+                    <button type="submit" class="btn btn-success">➕ Добавить</button>
+                </form>
+            </div>
+        </div>
+
+        <div class="card">
+            <h3>📋 Активные расписания</h3>
+            <div style="display:flex;gap:8px;margin-bottom:12px;">
+                <button class="btn btn-success btn-sm" onclick="setupCycles()">⚡ Быстрая настройка (3 цикла/день)</button>
+                <button class="btn btn-danger btn-sm" onclick="clearAll()">🗑 Очистить все</button>
+            </div>
+            <table>
+                <thead>
+                    <tr><th>Описание</th><th>Время</th><th>Следующий запуск</th><th></th></tr>
+                </thead>
+                <tbody id="schedule-table">
+                    <tr><td colspan="4" style="text-align:center;color:#64748b;">Нет активных расписаний</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        async function refreshStatus() {
+            const resp = await fetch('/actions/scheduler/status');
+            const data = await resp.json();
+            
+            const badge = document.getElementById('status-badge');
+            if (data.running) {
+                badge.className = 'status-badge running';
+                badge.textContent = '▶ Запущен';
+            } else {
+                badge.className = 'status-badge stopped';
+                badge.textContent = '⏹ Остановлен';
+            }
+            
+            const table = document.getElementById('schedule-table');
+            if (data.schedules.length === 0) {
+                table.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#64748b;">Нет активных расписаний</td></tr>';
+            } else {
+                table.innerHTML = data.schedules.map(s => `
+                    <tr>
+                        <td>${s.description}</td>
+                        <td>${s.schedule}</td>
+                        <td class="text-muted">${s.next_run || '—'}</td>
+                        <td><button class="btn btn-danger btn-sm" onclick="removeSchedule('${s.id}')">✕</button></td>
+                    </tr>
+                `).join('');
+            }
+        }
+
+        async function schedulerStart() {
+            await fetch('/actions/scheduler/start');
+            refreshStatus();
+        }
+
+        async function schedulerStop() {
+            await fetch('/actions/scheduler/stop');
+            refreshStatus();
+        }
+
+        async function addWarmup(event) {
+            event.preventDefault();
+            const form = event.target;
+            const data = new FormData(form);
+            await fetch('/actions/scheduler/add-warmup', { method: 'POST', body: data });
+            refreshStatus();
+        }
+
+        async function addPost(event) {
+            event.preventDefault();
+            const form = event.target;
+            const data = new FormData(form);
+            await fetch('/actions/scheduler/add-posting', { method: 'POST', body: data });
+            refreshStatus();
+        }
+
+        async function removeSchedule(id) {
+            await fetch('/actions/scheduler/remove/' + id);
+            refreshStatus();
+        }
+
+        async function clearAll() {
+            if (!confirm('Удалить все расписания?')) return;
+            await fetch('/actions/scheduler/clear');
+            refreshStatus();
+        }
+
+        async function setupCycles() {
+            const accId = prompt('ID аккаунта:', '1');
+            const vacId = prompt('ID вакансии:', '1');
+            if (!accId || !vacId) return;
+            
+            const data = new FormData();
+            data.append('account_id', accId);
+            data.append('vacancy_id', vacId);
+            
+            await fetch('/actions/scheduler/setup-cycles', { method: 'POST', body: data });
+            refreshStatus();
+        }
+
+        // Auto-refresh every 10 seconds
+        setInterval(refreshStatus, 10000);
+        refreshStatus();
+    </script>
+</body>
+</html>

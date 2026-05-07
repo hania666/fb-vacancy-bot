@@ -52,6 +52,91 @@ def startup():
     init_db()
 
 
+# ---- Scheduler Actions ----
+
+
+@app.get("/actions/scheduler/start")
+def action_scheduler_start():
+    """Start the background scheduler"""
+    from core.scheduler import scheduler
+    scheduler.start()
+    return JSONResponse({"status": "ok", "message": "Scheduler started"})
+
+
+@app.get("/actions/scheduler/stop")
+def action_scheduler_stop():
+    """Stop the background scheduler"""
+    from core.scheduler import scheduler
+    scheduler.stop()
+    return JSONResponse({"status": "ok", "message": "Scheduler stopped"})
+
+
+@app.get("/actions/scheduler/status")
+def action_scheduler_status():
+    """Get scheduler status and active schedules"""
+    from core.scheduler import scheduler
+    return JSONResponse({
+        "running": scheduler._running,
+        "schedules": scheduler.get_schedules(),
+    })
+
+
+@app.post("/actions/scheduler/add-warmup")
+def action_add_warmup_schedule(account_id: int = Form(0),
+                               hour: int = Form(10),
+                               minute: int = Form(0)):
+    """Add warmup schedule for an account (0 = all)"""
+    from core.scheduler import scheduler
+    scheduler.start()  # auto-start if not running
+    if account_id == 0:
+        scheduler.add_warmup_schedule_for_all(hour, minute)
+        return JSONResponse({"status": "ok", "message": f"Warmup scheduled for all accounts at {hour:02d}:{minute:02d}"})
+    else:
+        scheduler.add_warmup_schedule(account_id, hour, minute)
+        return JSONResponse({"status": "ok", "message": f"Warmup scheduled for account #{account_id} at {hour:02d}:{minute:02d}"})
+
+
+@app.post("/actions/scheduler/add-posting")
+def action_add_posting_schedule(vacancy_id: int = Form(0),
+                                 hour: int = Form(12),
+                                 minute: int = Form(0),
+                                 all_accounts: bool = Form(True)):
+    """Add posting schedule"""
+    from core.scheduler import scheduler
+    scheduler.start()
+    scheduler.add_posting_schedule(vacancy_id, hour, minute,
+                                    account_ids=None if all_accounts else [])
+    return JSONResponse({"status": "ok", "message": f"Posting scheduled for vacancy #{vacancy_id} at {hour:02d}:{minute:02d}"})
+
+
+@app.get("/actions/scheduler/remove/{job_id}")
+def action_remove_schedule(job_id: str):
+    """Remove a schedule"""
+    from core.scheduler import scheduler
+    success = scheduler.remove_schedule(job_id)
+    return JSONResponse({"status": "ok" if success else "error", "message": "Removed" if success else "Not found"})
+
+
+@app.get("/actions/scheduler/clear")
+def action_clear_schedules():
+    """Remove all schedules"""
+    from core.scheduler import scheduler
+    scheduler.clear_all()
+    return JSONResponse({"status": "ok", "message": "All schedules cleared"})
+
+
+@app.post("/actions/scheduler/setup-cycles")
+def action_setup_cycles(account_id: int = Form(1), vacancy_id: int = Form(1)):
+    """Setup 3 daily warmup+post cycles for an account"""
+    from core.scheduler import scheduler
+    scheduler.start()
+    scheduler.add_three_cycles(account_id, vacancy_id)
+    return JSONResponse({
+        "status": "ok",
+        "message": f"3 cycles configured for account #{account_id}, vacancy #{vacancy_id}",
+    })
+
+
 def get_db():
     db = SessionLocal()
     try:
@@ -389,6 +474,15 @@ def action_test_ix():
     """Test connection to ixBrowser"""
     result = test_connection()
     return JSONResponse(result)
+
+
+# ---- Routes: Scheduler Page ----
+
+@app.get("/scheduler", response_class=HTMLResponse)
+def scheduler_page(request: Request):
+    return templates.TemplateResponse("scheduler.html", {
+        "request": request,
+    })
 
 
 # ---- Routes: Statistics ----
