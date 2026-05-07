@@ -114,47 +114,39 @@ class IXBrowserClient:
     def open_profile_and_get_driver(self, profile_id) -> Optional[Chrome]:
         """Open profile and return Selenium driver.
         
-        If a driver for this profile already exists, reuse it.
-        Otherwise close any existing profile instances, then open fresh.
+        Always opens a fresh profile - closes any existing instance first.
         """
-        # Check if profile already has an open session
-        opened = self._client.get_opened_profile_list()
-        self.code = self._client.code
-        self.message = self._client.message
+        # Close any existing instance (ignore errors)
+        try:
+            logger.info(f"Closing any existing instances of profile {profile_id}...")
+            self.close_profile(profile_id)
+            time.sleep(2)
+        except:
+            pass
         
-        already_open = False
-        if opened:
-            for p in opened:
-                if str(p.get('profile_id', '')) == str(profile_id):
-                    already_open = True
-                    break
-        
-        if already_open:
-            logger.info(f"Profile {profile_id} already open, reusing")
-            # Get the open result by opening again (ixBrowser returns existing debug address)
-            open_result = self.open_profile(profile_id)
-            if open_result:
-                return self.get_selenium_driver(open_result)
-            return None
-        
-        # Close any lingering sessions first
-        logger.info(f"Closing any existing instances of profile {profile_id}")
-        self.close_profile(profile_id)
+        # Wait a moment for Chrome to fully close  
         time.sleep(1)
         
         # Open fresh
         open_result = self.open_profile(profile_id)
         if not open_result:
             logger.warning(f"First attempt failed, retrying...")
-            time.sleep(2)
+            time.sleep(3)
             open_result = self.open_profile(profile_id)
         
         if not open_result:
             logger.error(f"Failed to open profile {profile_id}: code={self.code}, msg={self.message}")
             return None
-
-        time.sleep(2)
-        return self.get_selenium_driver(open_result)
+        
+        # Wait for Chrome to start
+        time.sleep(3)
+        
+        driver = self.get_selenium_driver(open_result)
+        if driver:
+            logger.info(f"✅ Driver connected for profile {profile_id}")
+        else:
+            logger.error(f"❌ Failed to create driver for profile {profile_id}")
+        return driver
 
     # ---- Proxy Management ----
 
