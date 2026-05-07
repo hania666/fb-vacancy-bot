@@ -529,8 +529,12 @@ class PostingEngine:
                     break
                     
                 logger.info(f"Navigating to: {target_url}")
-                driver.get(target_url)
-                time.sleep(random.uniform(4.0, 6.0))
+                try:
+                    driver.get(target_url)
+                    time.sleep(random.uniform(4.0, 6.0))
+                except Exception as e:
+                    logger.warning(f"Navigation failed: {e}")
+                    continue
                 
                 current = driver.current_url.lower()
                 if "checkpoint" in current:
@@ -539,6 +543,14 @@ class PostingEngine:
                     return []
                 
                 logger.info(f"Current URL: {current}")
+                
+                # Take screenshot to help debug
+                try:
+                    from datetime import datetime
+                    ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+                    driver.save_screenshot(f"logs/collect_groups_{ts}.png")
+                except:
+                    pass
                 
                 # Scroll and collect
                 seen_ids = set()
@@ -635,7 +647,21 @@ class PostingEngine:
         }
         
         try:
-            # Step 1: Collect groups from profile
+            # Step 1: Check driver is alive
+            try:
+                _ = driver.current_url
+            except Exception:
+                logger.warning("Driver is stale, re-opening profile...")
+                try:
+                    self.client.close_profile(profile_id)
+                except:
+                    pass
+                time.sleep(2)
+                driver = self.client.open_profile_and_get_driver(profile_id)
+                if not driver:
+                    return {"status": "error", "message": "Failed to re-open ixBrowser profile"}
+            
+            # Step 2: Collect groups from profile
             logger.info("🔍 Collecting groups from profile...")
             group_urls = self._collect_groups_from_profile(driver, max_groups=max_posts)
             
