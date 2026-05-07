@@ -20,7 +20,11 @@ class IXBrowserClient:
     """Client for ixBrowser Local API V2"""
 
     def __init__(self, api_url: str = None, api_key: str = ""):
-        self.api_url = (api_url or IXBROWSER_API).rstrip("/")
+        if api_url:
+            base = api_url.rstrip("/")
+        else:
+            base = IXBROWSER_API.rstrip("/")
+        self.base_url = base + "/api/v2/"
         self.api_key = api_key
         self.code = 0
         self.message = ""
@@ -30,7 +34,7 @@ class IXBrowserClient:
 
     def _request(self, method: str, endpoint: str, data: dict = None) -> Optional[dict]:
         """Make HTTP request to ixBrowser API"""
-        url = f"{self.api_url}{endpoint}"
+        url = f"{self.base_url}{endpoint.lstrip('/')}"
         try:
             if method == "GET":
                 resp = httpx.get(url, headers=self._headers, timeout=30)
@@ -63,7 +67,7 @@ class IXBrowserClient:
 
     def get_profile_info(self, profile_id: str) -> Optional[dict]:
         """Get profile info by ID"""
-        return self._request("POST", "/profile/info", {"id": profile_id})
+        return self._request("POST", "/profile/info", {"profile_id": profile_id})
 
     def create_profile(self, name: str, proxy: str = "", proxy_type: str = "http",
                        user_agent: str = "", note: str = "",
@@ -84,7 +88,7 @@ class IXBrowserClient:
                        proxy_type: str = "http", user_agent: str = None,
                        note: str = None, group_id: str = None) -> bool:
         """Update profile settings"""
-        data = {"id": profile_id}
+        data = {"profile_id": profile_id}
         if name is not None: data["name"] = name
         if proxy is not None: data["proxy"] = proxy
         if proxy_type is not None: data["proxy_type"] = proxy_type
@@ -98,27 +102,27 @@ class IXBrowserClient:
                      load_profile_info_page: bool = False) -> Optional[dict]:
         """Open a profile. Returns {webdriver, debugging_address, ...}"""
         data = {
-            "id": profile_id,
+            "profile_id": profile_id,
             "cookies_backup": cookies_backup,
             "load_profile_info_page": load_profile_info_page,
         }
-        return self._request("POST", "/profile/open", data)
+        return self._request("POST", "/browser/open", data)
 
     def close_profile(self, profile_id: str) -> bool:
         """Close a profile"""
-        result = self._request("POST", "/profile/close", {"id": profile_id})
+        result = self._request("POST", "/browser/close", {"profile_id": profile_id})
         return result is not None
 
     def delete_profile(self, profile_id: str) -> bool:
         """Delete a profile"""
-        result = self._request("POST", "/profile/delete", {"id": profile_id})
+        result = self._request("POST", "/profile/delete", {"profile_id": profile_id})
         return result is not None
 
     # ---- Cookie Management ----
 
     def get_cookies(self, profile_id: str) -> Optional[list]:
         """Get cookies from an open profile"""
-        return self._request("POST", "/cookies/get", {"id": profile_id})
+        return self._request("POST", "/cookies/get", {"profile_id": profile_id})
 
     def set_cookies(self, profile_id: str, cookies: list) -> bool:
         """Set cookies for a profile"""
