@@ -607,23 +607,37 @@ class PostingEngine:
         }
         
         try:
-            # Step 1: Navigate directly to My Groups page (no delay, no homepage)
+            # Step 1: Navigate to Groups feed (Facebook might redirect from joins URL)
             logger.info("📋 Navigating to groups page...")
-            driver.get("https://www.facebook.com/groups/joins/?nav_source=tab&ordering=viewer_added")
+            driver.get("https://www.facebook.com/groups/feed/")
             
-            # Wait max 10s for body to load
-            try:
-                WebDriverWait(driver, 10).until(
-                    EC.presence_of_element_located((By.TAG_NAME, "body"))
-                )
-            except:
-                pass
+            # Wait for page to settle
+            time.sleep(random.uniform(3.0, 5.0))
             
-            time.sleep(random.uniform(2.0, 3.0))
-            
-            # Check if we're logged in
-            if "login" in driver.current_url.lower():
+            # Check if we're on groups feed or got redirected to login
+            current_url = driver.current_url.lower()
+            if "login" in current_url:
                 return {"status": "error", "message": "Not logged in - Facebook login page detected"}
+            
+            # Try to click "Your Groups" or "Мои группы" in the left sidebar
+            try:
+                your_groups_btn = driver.find_element(By.XPATH,
+                    "//span[contains(text(), 'Мои группы') or contains(text(), 'Your Groups') or contains(text(), 'Мої групи') or contains(text(), 'Ваши группы') or contains(text(), 'Всі групи')]"
+                )
+                your_groups_btn.click()
+                time.sleep(random.uniform(2.0, 3.0))
+                logger.info("Clicked 'Your Groups' link in sidebar")
+            except:
+                # Fallback: try direct URL
+                logger.info("Could not find 'Your Groups' button, trying direct URL")
+                driver.get("https://www.facebook.com/groups/joins/?nav_source=tab&ordering=viewer_added")
+                time.sleep(random.uniform(3.0, 5.0))
+            
+            # Check if we're on the groups list
+            if "joins" in driver.current_url.lower() or "feed" in driver.current_url.lower():
+                logger.info(f"✅ On groups page: {driver.current_url}")
+            else:
+                logger.warning(f"Unexpected URL after navigation: {driver.current_url}")
             
             # Step 2: Collect groups from the My Groups page
             logger.info("🔍 Collecting groups from profile...")
