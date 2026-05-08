@@ -446,6 +446,55 @@ def action_warmup():
         return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
 
 
+@app.get("/actions/warmup/{account_id}")
+def action_warmup_one(account_id: int):
+    """Run warmup for a single account in background"""
+    try:
+        for p in pm.list_processes():
+            if f"Прогрев #{account_id}" in p.get("description", ""):
+                return JSONResponse({
+                    "status": "already_running",
+                    "message": f"Прогрев акк #{account_id} уже идёт!",
+                })
+
+        db = get_db()
+        account = db.query(Account).filter(Account.id == account_id).first()
+        if not account:
+            db.close()
+            return JSONResponse({"status": "error", "message": "Аккаунт не найден"}, status_code=404)
+        if not account.ix_profile_id:
+            db.close()
+            return JSONResponse({"status": "error", "message": "Нет ID профиля iXBrowser"}, status_code=400)
+
+        profile_id = account.ix_profile_id
+        if account.status == "new":
+            account.status = "warming"
+            account.warmup_started_at = datetime.utcnow()
+            db.commit()
+        db.close()
+
+        def run(**kwargs):
+            from core.warmup import run_warmup_session
+            run_warmup_session(
+                account_id=account_id,
+                profile_id=profile_id,
+                duration_minutes=15,
+                stop_flag=kwargs.get("stop_flag"),
+            )
+
+        proc = pm.start(
+            description=f"🔥 Прогрев #{account_id}",
+            target=run,
+        )
+        return JSONResponse({
+            "status": "started",
+            "message": f"Прогрев акк #{account_id} запущен",
+            "process_id": proc.id,
+        })
+    except Exception as e:
+        logger.error(f"Warmup one error: {e}")
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
 @app.get("/actions/warmup-single/{account_id}")
 def action_warmup_single(account_id: int):
     """Run warmup for a single specific account"""
@@ -866,4 +915,15 @@ def stats(request: Request):
         "success": success,
         "failed": failed,
         "banned": banned_count,
+    })
+
+
+@app.get("/api/vacancies")
+def api_vacancies():
+    """Return active vacancies for UI dropdowns"""
+    db = get_db()
+    vacancies = db.query(Vacancy).filter(Vacancy.is_active == True).all()
+    db.close()
+    return JSONResponse({
+        "vacancies": [{"id": v.id, "title": v.title} for v in vacancies]
     })
