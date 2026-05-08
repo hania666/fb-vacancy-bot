@@ -82,186 +82,316 @@ class PostingEngine:
     def _post_to_group(self, driver: Chrome, group_url: str,
                        text: str, photo_path: str = None) -> tuple:
         """
-        Post to a single Facebook group.
-        
-        Uses WebDriverWait for reliable element detection.
-        Uses JS clipboard paste for fast text input.
-        Takes screenshot on error for diagnostics.
-        
-        Returns:
-            (success: bool, message: str)
+        Post vacancy to a single Facebook group.
+
+        Flow:
+          1. Navigate to group
+          2. Click "Напишіть щось..." placeholder → opens composer
+          3. Wait for contenteditable to appear in dialog
+          4. Paste text via clipboard (or send_keys fallback)
+          5. Upload photo if provided
+          6. Click Publish button
+          7. Verify no checkpoint/ban
         """
         group_id_str = group_url.rstrip('/').split('/')[-1]
+
+        def _screenshot(tag="error"):
+            try:
+                logs_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
+                os.makedirs(logs_dir, exist_ok=True)
+                path = os.path.join(logs_dir, f"{tag}_{group_id_str}_{int(time.time())}.png")
+                driver.save_screenshot(path)
+                logger.info(f"📸 Screenshot: {path}")
+            except Exception:
+                pass
+
         try:
-            # STEP 1: Ensure we're in groups context
-            driver.get("https://www.facebook.com/groups/feed/")
-            time.sleep(2)
-            
-            # STEP 2: Navigate to target group
-            logger.info(f"Navigating to group: {group_url}")
+            # ── STEP 1: Navigate to group ────────────────────────────────
+            logger.info(f"🌐 Navigating to: {group_url}")
             driver.get(group_url)
             time.sleep(random.uniform(4.0, 6.0))
-            
-            current_url = driver.current_url.lower()
-            if "checkpoint" in current_url:
+
+            cur = driver.current_url.lower()
+            if "checkpoint" in cur:
                 return (False, "Account checkpoint - needs verification")
-            if "login" in current_url:
+            if "login" in cur:
                 return (False, "Logout detected")
-            
-            logger.info(f"📍 Group page loaded")
-            
-            # STEP 3: Find post composer with WebDriverWait
+
+            # Dismiss any popups that might block the placeholder
+            self._dismiss_popups(driver)
+
+            # ── STEP 2: Click the "Напишіть щось..." placeholder ─────────
+            # FB renders a fake input that needs to be clicked to open the real composer
+            placeholder_clicked = False
+
+            # Try all known placeholder selectors
+            placeholder_xpaths = [
+                # Ukrainian
+                "//span[contains(text(),'Напишіть щось')]",
+                "//div[contains(text(),'Напишіть щось')]",
+                # Russian
+                "//span[contains(text(),'Напишите')]",
+                "//div[contains(text(),'Напишите')]",
+                # English
+                "//span[contains(text(),'Write something')]",
+                "//div[contains(text(),'Write something')]",
+                # Generic: any div with role=button that contains the placeholder
+                "//div[@role='button' and .//*[contains(text(),'Напишіть')]]",
+                "//div[@role='button' and .//*[contains(text(),'Write')]]",
+                # Fallback: any aria-label on the compose area
+                "//div[@aria-label='Створити допис']",
+                "//div[@aria-label='Create post']",
+                "//div[@aria-label='Создать публикацию']",
+            ]
+
+            for xpath in placeholder_xpaths:
+                try:
+                    el = WebDriverWait(driver, 4).until(
+                        EC.element_to_be_clickable((By.XPATH, xpath))
+                    )
+                    driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
+                    time.sleep(0.5)
+                    driver.execute_script("arguments[0].click();", el)
+                    logger.info(f"✅ Clicked placeholder via: {xpath[:60]}")
+                    placeholder_clicked = True
+                    break
+                except Exception:
+                    continue
+
+            if not placeholder_clicked:
+                _screenshot("no_placeholder")
+                return (False, "Could not find 'Write something' placeholder")
+
+            # Wait for composer to open (dialog or expanded form)
+            time.sleep(random.uniform(2.0, 3.0))
+
+            # ── STEP 3: Find the real contenteditable textbox ────────────
             post_box = None
-            
-            # Strategy A: Find visible contenteditable inside form (already open)
-            try:
-                # Wait up to 8s for a contenteditable inside the group's post form
-                post_box = WebDriverWait(driver, 8).until(
-                    EC.presence_of_element_located(
-                        (By.XPATH, "//form//div[@contenteditable='true' and contains(@class, 'notranslate')]")
-                    )
-                )
-                logger.info("Found textbox inside form (already open)")
-            except:
-                pass
-            
-            if not post_box:
-                # Strategy B: Find "Write something" button and click it
+            textbox_xpaths = [
+                # Inside modal dialog
+                "//div[@role='dialog']//div[@contenteditable='true' and contains(@class,'notranslate')]",
+                "//div[@role='dialog']//div[@contenteditable='true']",
+                # Inside form (no dialog)
+                "//form//div[@contenteditable='true' and contains(@class,'notranslate')]",
+                "//form//div[@contenteditable='true']",
+                # Generic fallback
+                "//div[@contenteditable='true' and contains(@class,'notranslate')]",
+                "//div[@contenteditable='true']",
+            ]
+
+            for xpath in textbox_xpaths:
                 try:
-                    write_btn = WebDriverWait(driver, 5).until(
-                        EC.element_to_be_clickable(
-                            (By.XPATH, "//span[contains(text(), 'Напишіть') or contains(text(), 'Напишите') or contains(text(), 'Write something')]/ancestor::div[@role='button']")
-                        )
+                    post_box = WebDriverWait(driver, 6).until(
+                        EC.element_to_be_clickable((By.XPATH, xpath))
                     )
-                    write_btn.click()
-                    logger.info("Clicked 'Write something' button")
-                    time.sleep(random.uniform(2.0, 3.0))
-                    
-                    # Now find the textbox in the popup
-                    post_box = WebDriverWait(driver, 8).until(
-                        EC.presence_of_element_located(
-                            (By.XPATH, "//div[@role='dialog']//div[@contenteditable='true' and contains(@class, 'notranslate')]")
-                        )
-                    )
-                    logger.info("Found textbox in dialog")
-                except:
-                    pass
-            
+                    logger.info(f"✅ Found textbox: {xpath[:60]}")
+                    break
+                except Exception:
+                    continue
+
             if not post_box:
-                # Strategy C: generic contenteditable anywhere
-                try:
-                    post_box = WebDriverWait(driver, 5).until(
-                        EC.presence_of_element_located(
-                            (By.XPATH, "//div[@contenteditable='true']")
-                        )
-                    )
-                    logger.info("Found fallback contenteditable")
-                except:
-                    pass
-            
-            if not post_box:
-                return (False, "Could not find post composer (tried 3 strategies)")
-            
-            # STEP 4: Type/insert text
+                _screenshot("no_textbox")
+                return (False, "Composer opened but textbox not found")
+
+            # Click to focus
             try:
-                post_box.click()
+                driver.execute_script("arguments[0].click();", post_box)
                 time.sleep(0.5)
-            except:
+            except Exception:
                 pass
-            
-            # Use JS to paste text via clipboard (much faster than send_keys line-by-line)
+
+            # ── STEP 4: Insert text ───────────────────────────────────────
+            # Strategy A: pyperclip clipboard paste (fastest, preserves newlines)
+            pasted = False
             try:
-                # Place text in clipboard via JS
                 import pyperclip
                 pyperclip.copy(text)
                 post_box.send_keys(Keys.CONTROL, 'v')
-                time.sleep(1)
-            except ImportError:
-                # Fallback: send_keys line by line
-                logger.info("pyperclip not installed, using send_keys")
-                for line in text.split('\n'):
-                    post_box.send_keys(line)
-                    time.sleep(random.uniform(0.05, 0.1))
-                    post_box.send_keys(Keys.SHIFT + Keys.ENTER)
+                time.sleep(1.0)
+                pasted = True
+                logger.info("📋 Text pasted via clipboard")
             except Exception:
-                # Fallback: send_keys
+                pass
+
+            # Strategy B: JS execCommand paste
+            if not pasted:
+                try:
+                    driver.execute_script("""
+                        arguments[0].focus();
+                        document.execCommand('selectAll');
+                        document.execCommand('delete');
+                    """, post_box)
+                    # Insert text line by line with execCommand
+                    lines = text.split('\n')
+                    for i, line in enumerate(lines):
+                        driver.execute_script(
+                            "arguments[0].focus(); document.execCommand('insertText', false, arguments[1]);",
+                            post_box, line
+                        )
+                        if i < len(lines) - 1:
+                            post_box.send_keys(Keys.SHIFT + Keys.ENTER)
+                        time.sleep(0.05)
+                    pasted = True
+                    logger.info("📋 Text inserted via execCommand")
+                except Exception:
+                    pass
+
+            # Strategy C: send_keys fallback (slow but reliable)
+            if not pasted:
                 for line in text.split('\n'):
                     post_box.send_keys(line)
-                    time.sleep(random.uniform(0.05, 0.1))
                     post_box.send_keys(Keys.SHIFT + Keys.ENTER)
-            
+                    time.sleep(0.05)
+                logger.info("⌨️ Text typed via send_keys")
+
             time.sleep(random.uniform(1.0, 2.0))
-            
-            # STEP 5: Upload photo
-            if photo_path and os.path.exists(photo_path):
-                try:
-                    file_inputs = driver.find_elements(By.XPATH, "//input[@type='file']")
+
+            # ── STEP 5: Upload photo ──────────────────────────────────────
+            if photo_path:
+                # Resolve path — handle both /uploads/... URL and filesystem path
+                abs_path = photo_path
+                if photo_path.startswith("/uploads/"):
+                    base = os.path.dirname(os.path.dirname(__file__))
+                    abs_path = os.path.join(base, "data", "uploads", os.path.basename(photo_path))
+                elif not os.path.isabs(photo_path):
+                    abs_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), photo_path)
+
+                if os.path.exists(abs_path):
                     uploaded = False
-                    for fi in file_inputs:
+                    # First try to click "Photo/Video" button to reveal file input
+                    for photo_btn_xpath in [
+                        "//div[@aria-label='Фото/відео']",
+                        "//div[@aria-label='Photo/video']",
+                        "//div[@aria-label='Фото/видео']",
+                        "//span[contains(text(),'Фото') and contains(text(),'відео')]/..",
+                        "//input[@type='file' and contains(@accept,'image')]",
+                    ]:
                         try:
-                            fi.send_keys(os.path.abspath(photo_path))
-                            logger.info(f"Uploaded photo: {photo_path}")
-                            time.sleep(random.uniform(3.0, 5.0))
-                            uploaded = True
-                            break
-                        except:
+                            el = driver.find_element(By.XPATH, photo_btn_xpath)
+                            if el.tag_name == "input":
+                                el.send_keys(os.path.abspath(abs_path))
+                                uploaded = True
+                                logger.info(f"🖼 Photo uploaded directly: {abs_path}")
+                                break
+                            else:
+                                el.click()
+                                time.sleep(1.5)
+                                # Now find file input
+                                inputs = driver.find_elements(By.XPATH, "//input[@type='file']")
+                                for inp in inputs:
+                                    try:
+                                        inp.send_keys(os.path.abspath(abs_path))
+                                        uploaded = True
+                                        logger.info(f"🖼 Photo uploaded after button click: {abs_path}")
+                                        break
+                                    except Exception:
+                                        continue
+                                if uploaded:
+                                    break
+                        except Exception:
                             continue
+
                     if not uploaded:
-                        logger.warning("No file input found for photo")
-                except Exception as e:
-                    logger.warning(f"Photo upload error: {e}")
-            
-            # STEP 6: Click Publish
-            time.sleep(1)
-            
+                        # Last resort: try any file input
+                        inputs = driver.find_elements(By.XPATH, "//input[@type='file']")
+                        for inp in inputs:
+                            try:
+                                inp.send_keys(os.path.abspath(abs_path))
+                                uploaded = True
+                                logger.info(f"🖼 Photo uploaded via fallback input")
+                                break
+                            except Exception:
+                                continue
+
+                    if uploaded:
+                        time.sleep(random.uniform(3.0, 5.0))  # wait for upload
+                    else:
+                        logger.warning(f"⚠️ Could not upload photo: {abs_path}")
+                else:
+                    logger.warning(f"⚠️ Photo file not found: {abs_path}")
+
+            # ── STEP 6: Click Publish ─────────────────────────────────────
+            time.sleep(1.0)
             publish_clicked = False
-            for selector in [
+
+            publish_xpaths = [
                 "//div[@aria-label='Опублікувати']",
                 "//div[@aria-label='Опубликовать']",
                 "//div[@aria-label='Post']",
-                "//span[text()='Опублікувати']/ancestor::div[@role='button']",
-                "//span[text()='Опубликовать']/ancestor::div[@role='button']",
-                "//span[text()='Publish']/ancestor::div[@role='button']",
-                "//span[text()='Post']/ancestor::div[@role='button']",
-            ]:
+                "//div[@aria-label='Publish']",
+                "//span[normalize-space(text())='Опублікувати']/ancestor::div[@role='button'][1]",
+                "//span[normalize-space(text())='Опубликовать']/ancestor::div[@role='button'][1]",
+                "//span[normalize-space(text())='Publish']/ancestor::div[@role='button'][1]",
+                "//span[normalize-space(text())='Post']/ancestor::div[@role='button'][1]",
+            ]
+
+            for xpath in publish_xpaths:
                 try:
-                    btn = WebDriverWait(driver, 3).until(
-                        EC.element_to_be_clickable((By.XPATH, selector))
+                    btn = WebDriverWait(driver, 4).until(
+                        EC.element_to_be_clickable((By.XPATH, xpath))
                     )
                     driver.execute_script("arguments[0].click();", btn)
                     publish_clicked = True
-                    logger.info(f"Clicked publish")
-                    time.sleep(2)
+                    logger.info(f"✅ Publish clicked")
+                    time.sleep(random.uniform(2.0, 3.0))
                     break
-                except:
+                except Exception:
                     continue
-            
+
             if not publish_clicked:
+                # Fallback: Ctrl+Enter
                 try:
                     post_box.send_keys(Keys.CONTROL + Keys.ENTER)
-                    time.sleep(2)
-                except:
+                    time.sleep(2.0)
+                    logger.info("⌨️ Sent Ctrl+Enter as publish fallback")
+                except Exception:
                     pass
-            
-            # Check for ban
-            if "checkpoint" in driver.current_url.lower():
-                return (False, "Account checkpoint")
-            
+
+            # ── STEP 7: Verify ────────────────────────────────────────────
+            time.sleep(1.0)
+            cur = driver.current_url.lower()
+            if "checkpoint" in cur:
+                return (False, "Account checkpoint after posting")
+
             return (True, "Posted successfully")
-            
+
         except Exception as e:
-            # Take screenshot for diagnostics
-            try:
-                screenshot_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'logs')
-                os.makedirs(screenshot_dir, exist_ok=True)
-                screenshot_path = os.path.join(screenshot_dir, f"error_{group_id_str}_{int(time.time())}.png")
-                driver.save_screenshot(screenshot_path)
-                logger.info(f"📸 Screenshot saved: {screenshot_path}")
-            except:
-                pass
-            logger.error(f"Post error for {group_url}: {e}")
+            _screenshot("exception")
+            logger.error(f"❌ Post error [{group_id_str}]: {e}")
             return (False, str(e))
-    
+
+    def _dismiss_popups(self, driver: Chrome) -> None:
+        """
+        Dismiss any popups/modals that appear after navigating to a group.
+        Handles:
+          - Group rules popup ("Далі" / "Next" button)
+          - Cookie banners
+          - Any other blocking dialogs
+        """
+        popup_actions = [
+            # Close X button on rules popup
+            ("//div[@role='dialog']//*[@aria-label='Закрити' or @aria-label='Close']", "click"),
+            # "Далі" / "Next" button on rules popup — click it to proceed
+            ("//div[@role='dialog']//span[normalize-space(text())='Далі']/..", "click"),
+            ("//div[@role='dialog']//span[normalize-space(text())='Next']/..", "click"),
+            ("//div[@role='dialog']//span[normalize-space(text())='Продовжити']/..", "click"),
+            # Generic dialog close
+            ("//div[@role='dialog']//*[@aria-label='Закрити']", "click"),
+        ]
+
+        for xpath, action in popup_actions:
+            try:
+                el = WebDriverWait(driver, 3).until(
+                    EC.element_to_be_clickable((By.XPATH, xpath))
+                )
+                driver.execute_script("arguments[0].click();", el)
+                logger.info(f"🚪 Dismissed popup via: {xpath[:50]}")
+                time.sleep(1.5)
+                return  # one popup at a time
+            except Exception:
+                continue
+
+
     def _log_posting_result(self, db, account_id: int, group_id: int,
                             vacancy_id: int, group_url: str,
                             success: bool, message: str):
