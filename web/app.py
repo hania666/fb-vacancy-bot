@@ -730,7 +730,72 @@ def action_test_ix():
     return JSONResponse(result)
 
 
-# ---- Routes: Scheduler Page ----
+@app.get("/actions/post-db/{account_id}/{vacancy_id}")
+def action_post_from_db(account_id: int, vacancy_id: int,
+                         delay_min: int = 30, delay_max: int = 120):
+    """
+    Post vacancy to ALL groups in DB, one by one.
+    Stops automatically when all groups are done.
+    Skips groups already posted to (per account+vacancy).
+    """
+    try:
+        for p in pm.list_processes():
+            if f"#{account_id}" in p.get("description", "") and "Рассылка" in p.get("description", ""):
+                return JSONResponse({
+                    "status": "already_running",
+                    "message": f"Рассылка акк #{account_id} уже запущена!",
+                })
+
+        db = get_db()
+        account = db.query(Account).filter(Account.id == account_id).first()
+        vacancy = db.query(Vacancy).filter(Vacancy.id == vacancy_id, Vacancy.is_active == True).first()
+        if not account:
+            db.close()
+            return JSONResponse({"status": "error", "message": "Аккаунт не найден"}, status_code=404)
+        if not vacancy:
+            db.close()
+            return JSONResponse({"status": "error", "message": "Вакансия не найдена или неактивна"}, status_code=404)
+        total_groups = db.query(Group).count()
+        db.close()
+
+        def run(**kwargs):
+            engine = PostingEngine()
+            engine.run_posting_from_db(
+                account_id=account_id,
+                vacancy_id=vacancy_id,
+                delay_min=delay_min,
+                delay_max=delay_max,
+                stop_flag=kwargs.get("stop_flag"),
+            )
+
+        proc = pm.start(
+            description=f"📨 Рассылка #{account_id} → {total_groups} групп",
+            target=run,
+        )
+        return JSONResponse({
+            "status": "started",
+            "message": f"Рассылка запущена: акк #{account_id}, {total_groups} групп в очереди",
+            "process_id": proc.id,
+        })
+    except Exception as e:
+        logger.error(f"post-db error: {e}")
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
+
+@app.get("/actions/dedup-groups")
+def action_dedup_groups():
+    """Remove duplicate groups from DB and normalise URLs"""
+    try:
+        result = PostingEngine.dedup_groups_in_db()
+        return JSONResponse({
+            "status": "ok",
+            "message": f"Удалено дублей: {result['removed']}, нормализовано URL: {result['normalised']}",
+            **result,
+        })
+    except Exception as e:
+        logger.error(f"Dedup error: {e}")
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
 
 @app.get("/scheduler", response_class=HTMLResponse)
 def scheduler_page(request: Request):
