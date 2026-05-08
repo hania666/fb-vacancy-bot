@@ -538,7 +538,7 @@ async def action_post_multi(
 ):
     """
     Post from multiple accounts, each with its own vacancy.
-    
+
     Body: JSON with format:
     {"assignments": [{"account_id": 1, "vacancy_id": 1}, ...]}
     """
@@ -547,10 +547,23 @@ async def action_post_multi(
         assignments = body.get("assignments", [])
         if not assignments:
             return JSONResponse({"status": "error", "message": "No assignments provided"})
-        
-        engine = PostingEngine()
-        result = engine.run_multiple_accounts_with_vacancies(assignments)
-        return JSONResponse(result)
+
+        def run(**kwargs):
+            engine = PostingEngine()
+            engine.run_multiple_accounts_with_vacancies(
+                assignments,
+                stop_flag=kwargs.get("stop_flag"),
+            )
+
+        proc = pm.start(
+            description=f"📨 Мульти-рассылка: {len(assignments)} акков",
+            target=run,
+        )
+        return JSONResponse({
+            "status": "started",
+            "message": f"Рассылка для {len(assignments)} акков запущена в фоне",
+            "process_id": proc.id,
+        })
     except Exception as e:
         logger.error(f"Post multi error: {e}")
         return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
