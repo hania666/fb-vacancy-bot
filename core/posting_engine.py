@@ -212,133 +212,95 @@ class PostingEngine:
                 pass
 
             # ── STEP 4: Insert text ───────────────────────────────────────
-            # Lexical (FB's editor) only reliably accepts real keystrokes,
-            # not clipboard paste or programmatic value setting.
-            # We try send_keys first, then verify text actually appeared.
+            # Lexical (FB editor) ignores send_keys with emojis (non-BMP chars).
+            # We use Chrome DevTools Protocol Input.insertText — native API,
+            # supports any Unicode, mimics real user typing perfectly.
 
             def _verify_text_present(min_chars: int = 10) -> bool:
-                """Check if textbox has at least some text content"""
                 try:
                     actual = post_box.get_attribute("textContent") or ""
-                    actual = actual.strip()
-                    return len(actual) >= min_chars
+                    return len(actual.strip()) >= min_chars
                 except Exception:
                     return False
 
-            # Focus and clear the textbox first
+            # Click + focus the textbox (don't use Ctrl+A — fails on emoji-containing fields)
             try:
                 driver.execute_script("arguments[0].click(); arguments[0].focus();", post_box)
-                time.sleep(0.4)
-                # Select all and delete (Ctrl+A, Delete)
-                post_box.send_keys(Keys.CONTROL + 'a')
-                time.sleep(0.2)
-                post_box.send_keys(Keys.DELETE)
-                time.sleep(0.3)
+                time.sleep(0.5)
             except Exception:
                 pass
 
             pasted = False
 
-            # Detect non-BMP characters (emojis, flags, etc.) — ChromeDriver send_keys
-            # cannot handle these. Skip Strategy A entirely if found.
-            has_non_bmp = any(ord(ch) > 0xFFFF for ch in text)
-            if has_non_bmp:
-                logger.info("🌐 Non-BMP chars detected (emojis), skipping send_keys")
+            # Strategy A: CDP Input.insertText (native Chrome typing — works with ANY Unicode)
+            try:
+                # Make sure focus is on the textbox
+                driver.execute_script("arguments[0].focus();", post_box)
+                time.sleep(0.2)
+                # CDP insertText respects current focus; types each char as user
+                driver.execute_cdp_cmd("Input.insertText", {"text": text})
+                time.sleep(1.5)
+                if _verify_text_present():
+                    pasted = True
+                    logger.info("⌨️ Text inserted via CDP Input.insertText")
+                else:
+                    logger.warning("⚠️ CDP insertText did not produce visible text")
+            except Exception as e:
+                logger.warning(f"CDP insertText failed: {e}")
 
-            # Strategy A: send_keys character-by-character (only for plain text)
-            if not has_non_bmp:
-                try:
-                    lines = text.split('\n')
-                    for i, line in enumerate(lines):
-                        if line:
-                            post_box.send_keys(line)
-                        if i < len(lines) - 1:
-                            post_box.send_keys(Keys.SHIFT + Keys.ENTER)
-                        time.sleep(0.03)
-                    time.sleep(0.8)
-                    if _verify_text_present():
-                        pasted = True
-                        logger.info("⌨️ Text typed via send_keys")
-                    else:
-                        logger.warning("⚠️ send_keys did not produce text, trying clipboard...")
-                except Exception as e:
-                    logger.warning(f"send_keys failed: {e}")
-
-            # Strategy B: pyperclip + Ctrl+V fallback
-            if not pasted:
-                try:
-                    import pyperclip
-                    pyperclip.copy(text)
-                    time.sleep(0.3)
-                    driver.execute_script("arguments[0].click(); arguments[0].focus();", post_box)
-                    time.sleep(0.3)
-                    post_box.send_keys(Keys.CONTROL + 'a')
-                    post_box.send_keys(Keys.DELETE)
-                    time.sleep(0.2)
-                    post_box.send_keys(Keys.CONTROL, 'v')
-                    time.sleep(1.5)
-                    if _verify_text_present():
-                        pasted = True
-                        logger.info("📋 Text pasted via clipboard")
-                except Exception as e:
-                    logger.warning(f"clipboard failed: {e}")
-
-            # Strategy C: paste via DataTransfer + paste event (best for Lexical with emojis)
+            # Strategy B: synthetic paste event with DataTransfer (Lexical handles paste)
             if not pasted:
                 try:
                     driver.execute_script("""
                         const el = arguments[0];
                         const text = arguments[1];
                         el.focus();
-                        // Build a synthetic ClipboardEvent with DataTransfer
                         const dt = new DataTransfer();
                         dt.setData('text/plain', text);
-                        const pasteEvent = new ClipboardEvent('paste', {
+                        const evt = new ClipboardEvent('paste', {
                             clipboardData: dt,
                             bubbles: true,
                             cancelable: true,
                         });
-                        el.dispatchEvent(pasteEvent);
+                        el.dispatchEvent(evt);
                     """, post_box, text)
                     time.sleep(1.5)
                     if _verify_text_present():
                         pasted = True
-                        logger.info("📋 Text inserted via paste event")
+                        logger.info("📋 Text inserted via synthetic paste event")
                 except Exception as e:
                     logger.warning(f"paste event failed: {e}")
 
-            # Strategy D: beforeinput + input event sequence
+            # Strategy C: pyperclip + CDP key events (real Ctrl+V via CDP)
             if not pasted:
                 try:
-                    driver.execute_script("""
-                        const el = arguments[0];
-                        const text = arguments[1];
-                        el.focus();
-                        const before = new InputEvent('beforeinput', {
-                            inputType: 'insertFromPaste',
-                            data: text,
-                            bubbles: true,
-                            cancelable: true,
-                        });
-                        el.dispatchEvent(before);
-                        const inp = new InputEvent('input', {
-                            inputType: 'insertFromPaste',
-                            data: text,
-                            bubbles: true,
-                        });
-                        el.dispatchEvent(inp);
-                    """, post_box, text)
+                    import pyperclip
+                    pyperclip.copy(text)
+                    time.sleep(0.4)
+                    driver.execute_script("arguments[0].click(); arguments[0].focus();", post_box)
+                    time.sleep(0.3)
+                    # Send Ctrl+V via CDP (no BMP limit)
+                    driver.execute_cdp_cmd("Input.dispatchKeyEvent", {
+                        "type": "keyDown", "modifiers": 2,  # 2 = Ctrl
+                        "key": "v", "code": "KeyV", "windowsVirtualKeyCode": 86,
+                    })
+                    driver.execute_cdp_cmd("Input.dispatchKeyEvent", {
+                        "type": "keyUp", "modifiers": 2,
+                        "key": "v", "code": "KeyV", "windowsVirtualKeyCode": 86,
+                    })
                     time.sleep(1.5)
                     if _verify_text_present():
                         pasted = True
-                        logger.info("📋 Text inserted via InputEvent")
+                        logger.info("📋 Text pasted via CDP Ctrl+V")
                 except Exception as e:
-                    logger.warning(f"InputEvent failed: {e}")
+                    logger.warning(f"CDP paste failed: {e}")
 
             if not pasted:
                 _screenshot("text_not_inserted")
                 logger.error("❌ All text insertion strategies failed")
                 return (False, "Could not insert text into composer")
+
+            time.sleep(random.uniform(1.0, 2.0))
 
             time.sleep(random.uniform(1.0, 2.0))
 
