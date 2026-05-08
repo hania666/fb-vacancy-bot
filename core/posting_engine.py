@@ -239,23 +239,30 @@ class PostingEngine:
 
             pasted = False
 
-            # Strategy A: send_keys character-by-character via lines (most reliable for Lexical)
-            try:
-                lines = text.split('\n')
-                for i, line in enumerate(lines):
-                    if line:
-                        post_box.send_keys(line)
-                    if i < len(lines) - 1:
-                        post_box.send_keys(Keys.SHIFT + Keys.ENTER)
-                    time.sleep(0.03)
-                time.sleep(0.8)
-                if _verify_text_present():
-                    pasted = True
-                    logger.info("⌨️ Text typed via send_keys")
-                else:
-                    logger.warning("⚠️ send_keys did not produce text, trying clipboard...")
-            except Exception as e:
-                logger.warning(f"send_keys failed: {e}")
+            # Detect non-BMP characters (emojis, flags, etc.) — ChromeDriver send_keys
+            # cannot handle these. Skip Strategy A entirely if found.
+            has_non_bmp = any(ord(ch) > 0xFFFF for ch in text)
+            if has_non_bmp:
+                logger.info("🌐 Non-BMP chars detected (emojis), skipping send_keys")
+
+            # Strategy A: send_keys character-by-character (only for plain text)
+            if not has_non_bmp:
+                try:
+                    lines = text.split('\n')
+                    for i, line in enumerate(lines):
+                        if line:
+                            post_box.send_keys(line)
+                        if i < len(lines) - 1:
+                            post_box.send_keys(Keys.SHIFT + Keys.ENTER)
+                        time.sleep(0.03)
+                    time.sleep(0.8)
+                    if _verify_text_present():
+                        pasted = True
+                        logger.info("⌨️ Text typed via send_keys")
+                    else:
+                        logger.warning("⚠️ send_keys did not produce text, trying clipboard...")
+                except Exception as e:
+                    logger.warning(f"send_keys failed: {e}")
 
             # Strategy B: pyperclip + Ctrl+V fallback
             if not pasted:
@@ -276,27 +283,50 @@ class PostingEngine:
                 except Exception as e:
                     logger.warning(f"clipboard failed: {e}")
 
-            # Strategy C: Lexical-aware InputEvent dispatch (last resort)
+            # Strategy C: paste via DataTransfer + paste event (best for Lexical with emojis)
             if not pasted:
                 try:
                     driver.execute_script("""
                         const el = arguments[0];
                         const text = arguments[1];
                         el.focus();
-                        // Lexical listens to beforeinput events
-                        const event = new InputEvent('beforeinput', {
-                            inputType: 'insertText',
+                        // Build a synthetic ClipboardEvent with DataTransfer
+                        const dt = new DataTransfer();
+                        dt.setData('text/plain', text);
+                        const pasteEvent = new ClipboardEvent('paste', {
+                            clipboardData: dt,
+                            bubbles: true,
+                            cancelable: true,
+                        });
+                        el.dispatchEvent(pasteEvent);
+                    """, post_box, text)
+                    time.sleep(1.5)
+                    if _verify_text_present():
+                        pasted = True
+                        logger.info("📋 Text inserted via paste event")
+                except Exception as e:
+                    logger.warning(f"paste event failed: {e}")
+
+            # Strategy D: beforeinput + input event sequence
+            if not pasted:
+                try:
+                    driver.execute_script("""
+                        const el = arguments[0];
+                        const text = arguments[1];
+                        el.focus();
+                        const before = new InputEvent('beforeinput', {
+                            inputType: 'insertFromPaste',
                             data: text,
                             bubbles: true,
                             cancelable: true,
                         });
-                        el.dispatchEvent(event);
-                        const event2 = new InputEvent('input', {
-                            inputType: 'insertText',
+                        el.dispatchEvent(before);
+                        const inp = new InputEvent('input', {
+                            inputType: 'insertFromPaste',
                             data: text,
                             bubbles: true,
                         });
-                        el.dispatchEvent(event2);
+                        el.dispatchEvent(inp);
                     """, post_box, text)
                     time.sleep(1.5)
                     if _verify_text_present():
