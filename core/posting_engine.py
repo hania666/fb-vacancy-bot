@@ -117,8 +117,10 @@ class PostingEngine:
             if "login" in cur:
                 return (False, "Logout detected")
 
-            # Dismiss any popups that might block the placeholder
+            # Dismiss any popups (rules, cookie banners, etc.) — multi-step
             self._dismiss_popups(driver)
+            time.sleep(0.5)
+            self._dismiss_popups(driver)  # second pass for multi-step popups
 
             # ── STEP 2: Click the "Напишіть щось..." placeholder ─────────
             # FB renders a fake input that needs to be clicked to open the real composer
@@ -360,36 +362,53 @@ class PostingEngine:
             logger.error(f"❌ Post error [{group_id_str}]: {e}")
             return (False, str(e))
 
-    def _dismiss_popups(self, driver: Chrome) -> None:
+    def _dismiss_popups(self, driver: Chrome, max_steps: int = 5) -> None:
         """
         Dismiss any popups/modals that appear after navigating to a group.
-        Handles:
-          - Group rules popup ("Далі" / "Next" button)
-          - Cookie banners
-          - Any other blocking dialogs
+        Handles multi-step rules popups (progress bar + Далі x N times),
+        cookie banners, and any other blocking dialogs.
         """
-        popup_actions = [
-            # Close X button on rules popup
-            ("//div[@role='dialog']//*[@aria-label='Закрити' or @aria-label='Close']", "click"),
-            # "Далі" / "Next" button on rules popup — click it to proceed
-            ("//div[@role='dialog']//span[normalize-space(text())='Далі']/..", "click"),
-            ("//div[@role='dialog']//span[normalize-space(text())='Next']/..", "click"),
-            ("//div[@role='dialog']//span[normalize-space(text())='Продовжити']/..", "click"),
-            # Generic dialog close
-            ("//div[@role='dialog']//*[@aria-label='Закрити']", "click"),
+        from selenium.webdriver.common.keys import Keys as _Keys
+
+        # Selectors ordered by priority
+        dismiss_xpaths = [
+            # X close button
+            "//div[@role='dialog']//*[@aria-label='Закрити']",
+            "//div[@role='dialog']//*[@aria-label='Close']",
+            # Далі / Next / Продовжити (multi-step rules)
+            "//div[@role='dialog']//div[@role='button']//span[normalize-space(text())='Далі']",
+            "//div[@role='dialog']//div[@role='button']//span[normalize-space(text())='Next']",
+            "//div[@role='dialog']//div[@role='button']//span[normalize-space(text())='Продовжити']",
+            "//div[@role='dialog']//div[@role='button']//span[normalize-space(text())='Continue']",
+            # Будь-яка кнопка в діалозі (last resort)
+            "//div[@role='dialog']//div[@role='button'][last()]",
         ]
 
-        for xpath, action in popup_actions:
-            try:
-                el = WebDriverWait(driver, 3).until(
-                    EC.element_to_be_clickable((By.XPATH, xpath))
-                )
-                driver.execute_script("arguments[0].click();", el)
-                logger.info(f"🚪 Dismissed popup via: {xpath[:50]}")
-                time.sleep(1.5)
-                return  # one popup at a time
-            except Exception:
-                continue
+        for step in range(max_steps):
+            dismissed = False
+            for xpath in dismiss_xpaths:
+                try:
+                    el = WebDriverWait(driver, 2).until(
+                        EC.element_to_be_clickable((By.XPATH, xpath))
+                    )
+                    driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
+                    driver.execute_script("arguments[0].click();", el)
+                    logger.info(f"🚪 Popup step {step+1}: clicked {xpath[:55]}")
+                    time.sleep(1.2)
+                    dismissed = True
+                    break
+                except Exception:
+                    continue
+
+            if not dismissed:
+                # Try Escape as last resort
+                try:
+                    from selenium.webdriver.common.action_chains import ActionChains
+                    ActionChains(driver).send_keys(_Keys.ESCAPE).perform()
+                    time.sleep(0.8)
+                except Exception:
+                    pass
+                break  # No more popups found
 
 
     def _log_posting_result(self, db, account_id: int, group_id: int,
