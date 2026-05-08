@@ -440,6 +440,63 @@ def action_warmup():
         return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
 
 
+@app.get("/actions/warmup-single/{account_id}")
+def action_warmup_single(account_id: int):
+    """Run warmup for a single specific account"""
+    try:
+        db = get_db()
+        account = db.query(Account).filter(Account.id == account_id).first()
+        if not account:
+            db.close()
+            return JSONResponse({"status": "error", "message": "Account not found"})
+        
+        profile_id = account.ix_profile_id
+        db.close()
+        
+        if not profile_id:
+            return JSONResponse({"status": "error", "message": "No iXBrowser profile ID"})
+
+        # Set status to warming
+        db = get_db()
+        acc = db.query(Account).filter(Account.id == account_id).first()
+        if acc and acc.status == "new":
+            acc.status = "warming"
+            acc.warmup_started_at = datetime.utcnow()
+            db.commit()
+        db.close()
+
+        from core.warmup import run_warmup_session
+
+        def run(**kwargs):
+            run_warmup_session(
+                account_id=account_id,
+                profile_id=profile_id,
+                duration_minutes=15,
+                stop_flag=kwargs.get("stop_flag"),
+            )
+            # Auto-set to ready after warmup
+            db2 = get_db()
+            acc2 = db2.query(Account).filter(Account.id == account_id).first()
+            if acc2 and acc2.status == "warming":
+                acc2.status = "ready"
+                db2.commit()
+            db2.close()
+
+        proc = pm.start(
+            description=f"🔥 Прогрев акк #{account_id}",
+            target=run,
+        )
+
+        return JSONResponse({
+            "status": "started",
+            "message": f"Прогрев акк #{account_id} запущен в фоне",
+            "process_id": proc.id,
+        })
+    except Exception as e:
+        logger.error(f"Warmup single error: {e}")
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
+
 @app.get("/actions/status")
 def action_status():
     """Get status of all running processes"""

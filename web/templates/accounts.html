@@ -60,14 +60,19 @@
             <button type="submit" class="btn btn-primary">Добавить</button>
         </form>
 
+        <div style="display:flex; gap:8px; margin-bottom:16px;">
+            <a href="/actions/warmup" class="btn btn-primary" onclick="this.textContent='🔥 Греем...';this.style.opacity='0.6';">🔥 Прогреть все</a>
+            <button class="btn btn-primary" onclick="warmupSelected()" style="background:#f59e0b;">🔥 Прогреть выбранные</button>
+        </div>
+
         <table>
             <thead>
-                <tr><th>ID</th><th>Логин</th><th>Статус</th><th>Прокси</th><th>Профиль iX</th><th>Всего постов</th><th>Вчера/Сегодня</th><th></th></tr>
+                <tr><th><input type="checkbox" id="selectAll" onchange="toggleAll()"></th><th>ID</th><th>Логин</th><th>Статус</th><th>Прокси</th><th>Профиль iX</th><th>Всего постов</th><th>Вчера/Сегодня</th><th></th></tr>
             </thead>
             <tbody>
                 {% for acc in accounts %}
                 <tr>
-                    <td>{{ acc.id }}</td>
+                    <td><input type="checkbox" class="acc-check" value="{{ acc.id }}"></td>
                     <td>{{ acc.login[:20] ~ '...' if acc.login|length > 20 else acc.login }}</td>
                     <td><span class="status {{ acc.status }}">{{ acc.status }}</span></td>
                     <td class="text-muted">{{ acc.proxy[:25] ~ '...' if acc.proxy|length > 25 else acc.proxy }}</td>
@@ -91,5 +96,25 @@
             </tbody>
         </table>
     </div>
+    <script>
+        function toggleAll() {
+            const checked = document.getElementById('selectAll').checked;
+            document.querySelectorAll('.acc-check').forEach(cb => cb.checked = checked);
+        }
+        function warmupSelected() {
+            const ids = [];
+            document.querySelectorAll('.acc-check:checked').forEach(cb => ids.push(cb.value));
+            if (ids.length === 0) { alert('Выберите аккаунты!'); return; }
+            if (!confirm(`Запустить прогрев для ${ids.length} аккаунтов?`)) return;
+            // Open warmup for each selected account one by one
+            ids.forEach((id, i) => {
+                setTimeout(() => {
+                    const a = document.createElement('a');
+                    a.href = `/actions/warmup-single/${id}`;
+                    a.click();
+                }, i * 500);
+            });
+        }
+    </script>
 </body>
 </html>
