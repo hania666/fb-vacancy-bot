@@ -427,13 +427,19 @@ async def import_groups_text(urls: str = Form("")):
 
 @app.get("/actions/warmup")
 def action_warmup():
-    """Run warmup for all warming/ready accounts"""
+    """Run warmup for all warming/ready accounts (background)"""
     try:
-        results = warmup_all_ready_accounts()
+        def run(**kwargs):
+            warmup_all_ready_accounts(stop_flag=kwargs.get("stop_flag"))
+
+        proc = pm.start(
+            description="🔥 Прогрев всех акков",
+            target=run,
+        )
         return JSONResponse({
-            "status": "ok",
-            "message": f"Warmup run: {len(results)} accounts processed",
-            "details": results,
+            "status": "started",
+            "message": "Прогрев всех акков запущен в фоне",
+            "process_id": proc.id,
         })
     except Exception as e:
         logger.error(f"Warmup error: {e}")

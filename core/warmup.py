@@ -354,7 +354,9 @@ def run_warmup_session(
     return results
 
 
-def warmup_all_ready_accounts():
+def warmup_all_ready_accounts(
+    stop_flag=None,
+):
     """Run warmup for all accounts in 'warming' or 'ready' status"""
     db = SessionLocal()
     accounts = db.query(Account).filter(
@@ -364,6 +366,10 @@ def warmup_all_ready_accounts():
 
     results = []
     for acc in accounts:
+        if stop_flag and stop_flag.is_set():
+            logger.info("⏹️ Warmup all: stop requested")
+            break
+
         if not acc.ix_profile_id:
             logger.warning(f"Account {acc.id} has no iXBrowser profile ID, skipping")
             continue
@@ -386,6 +392,7 @@ def warmup_all_ready_accounts():
             profile_id=acc.ix_profile_id,
             duration_minutes=15,
             groups_urls=group_urls,
+            stop_flag=stop_flag,
         )
         results.append({
             "account_id": acc.id,
