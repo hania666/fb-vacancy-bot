@@ -108,7 +108,7 @@
                 <button class="btn btn-success" onclick="runAction('/actions/warmup', 'Запуск прогрева...')">🔥 Прогреть аккаунты</button>
                 <button class="btn btn-success" onclick="promptProfileAndCollect()">🔍 Собрать группы</button>
                 <button class="btn btn-success" onclick="promptPost()">📨 Рассылка (1 акк)</button>
-                <button class="btn btn-success" onclick="promptPostFromProfile()">📤 Из профиля (1 акк)</button>
+                <button class="btn btn-success" onclick="promptPostFromProfile()">📨 Из БД (1 акк)</button>
                 <button class="btn btn-success" onclick="promptPostAll()">📨 Рассылка (все акки)</button>
                 <a href="/scheduler" class="btn btn-primary">⏰ Планировщик</a>
             </div>
@@ -181,9 +181,9 @@
             if (accId && vacId) {
                 const resultDiv = document.getElementById('action-result');
                 resultDiv.style.display = 'block';
-                resultDiv.textContent = '🔄 Запуск рассылки из профиля...';
+                resultDiv.textContent = '🔄 Запуск рассылки из БД...';
                 try {
-                    const resp = await fetch('/actions/post-from-profile/' + accId + '/' + vacId);
+                    const resp = await fetch('/actions/post-db/' + accId + '/' + vacId);
                     const data = await resp.json();
                     resultDiv.textContent = '✅ ' + data.message;
                 } catch (e) {
