@@ -212,48 +212,103 @@ class PostingEngine:
                 pass
 
             # ── STEP 4: Insert text ───────────────────────────────────────
-            # Strategy A: pyperclip clipboard paste (fastest, preserves newlines)
-            pasted = False
+            # Lexical (FB's editor) only reliably accepts real keystrokes,
+            # not clipboard paste or programmatic value setting.
+            # We try send_keys first, then verify text actually appeared.
+
+            def _verify_text_present(min_chars: int = 10) -> bool:
+                """Check if textbox has at least some text content"""
+                try:
+                    actual = post_box.get_attribute("textContent") or ""
+                    actual = actual.strip()
+                    return len(actual) >= min_chars
+                except Exception:
+                    return False
+
+            # Focus and clear the textbox first
             try:
-                import pyperclip
-                pyperclip.copy(text)
-                post_box.send_keys(Keys.CONTROL, 'v')
-                time.sleep(1.0)
-                pasted = True
-                logger.info("📋 Text pasted via clipboard")
+                driver.execute_script("arguments[0].click(); arguments[0].focus();", post_box)
+                time.sleep(0.4)
+                # Select all and delete (Ctrl+A, Delete)
+                post_box.send_keys(Keys.CONTROL + 'a')
+                time.sleep(0.2)
+                post_box.send_keys(Keys.DELETE)
+                time.sleep(0.3)
             except Exception:
                 pass
 
-            # Strategy B: JS execCommand paste
+            pasted = False
+
+            # Strategy A: send_keys character-by-character via lines (most reliable for Lexical)
+            try:
+                lines = text.split('\n')
+                for i, line in enumerate(lines):
+                    if line:
+                        post_box.send_keys(line)
+                    if i < len(lines) - 1:
+                        post_box.send_keys(Keys.SHIFT + Keys.ENTER)
+                    time.sleep(0.03)
+                time.sleep(0.8)
+                if _verify_text_present():
+                    pasted = True
+                    logger.info("⌨️ Text typed via send_keys")
+                else:
+                    logger.warning("⚠️ send_keys did not produce text, trying clipboard...")
+            except Exception as e:
+                logger.warning(f"send_keys failed: {e}")
+
+            # Strategy B: pyperclip + Ctrl+V fallback
+            if not pasted:
+                try:
+                    import pyperclip
+                    pyperclip.copy(text)
+                    time.sleep(0.3)
+                    driver.execute_script("arguments[0].click(); arguments[0].focus();", post_box)
+                    time.sleep(0.3)
+                    post_box.send_keys(Keys.CONTROL + 'a')
+                    post_box.send_keys(Keys.DELETE)
+                    time.sleep(0.2)
+                    post_box.send_keys(Keys.CONTROL, 'v')
+                    time.sleep(1.5)
+                    if _verify_text_present():
+                        pasted = True
+                        logger.info("📋 Text pasted via clipboard")
+                except Exception as e:
+                    logger.warning(f"clipboard failed: {e}")
+
+            # Strategy C: Lexical-aware InputEvent dispatch (last resort)
             if not pasted:
                 try:
                     driver.execute_script("""
-                        arguments[0].focus();
-                        document.execCommand('selectAll');
-                        document.execCommand('delete');
-                    """, post_box)
-                    # Insert text line by line with execCommand
-                    lines = text.split('\n')
-                    for i, line in enumerate(lines):
-                        driver.execute_script(
-                            "arguments[0].focus(); document.execCommand('insertText', false, arguments[1]);",
-                            post_box, line
-                        )
-                        if i < len(lines) - 1:
-                            post_box.send_keys(Keys.SHIFT + Keys.ENTER)
-                        time.sleep(0.05)
-                    pasted = True
-                    logger.info("📋 Text inserted via execCommand")
-                except Exception:
-                    pass
+                        const el = arguments[0];
+                        const text = arguments[1];
+                        el.focus();
+                        // Lexical listens to beforeinput events
+                        const event = new InputEvent('beforeinput', {
+                            inputType: 'insertText',
+                            data: text,
+                            bubbles: true,
+                            cancelable: true,
+                        });
+                        el.dispatchEvent(event);
+                        const event2 = new InputEvent('input', {
+                            inputType: 'insertText',
+                            data: text,
+                            bubbles: true,
+                        });
+                        el.dispatchEvent(event2);
+                    """, post_box, text)
+                    time.sleep(1.5)
+                    if _verify_text_present():
+                        pasted = True
+                        logger.info("📋 Text inserted via InputEvent")
+                except Exception as e:
+                    logger.warning(f"InputEvent failed: {e}")
 
-            # Strategy C: send_keys fallback (slow but reliable)
             if not pasted:
-                for line in text.split('\n'):
-                    post_box.send_keys(line)
-                    post_box.send_keys(Keys.SHIFT + Keys.ENTER)
-                    time.sleep(0.05)
-                logger.info("⌨️ Text typed via send_keys")
+                _screenshot("text_not_inserted")
+                logger.error("❌ All text insertion strategies failed")
+                return (False, "Could not insert text into composer")
 
             time.sleep(random.uniform(1.0, 2.0))
 
