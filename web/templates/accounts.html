@@ -74,7 +74,16 @@
                     <td class="text-muted">{{ acc.ix_profile_id[:10] ~ '...' if acc.ix_profile_id|length > 10 else acc.ix_profile_id }}</td>
                     <td>{{ acc.total_post_count }}</td>
                     <td class="text-muted">—</td>
-                    <td><a href="/accounts/{{ acc.id }}/delete" class="btn btn-danger btn-sm" onclick="return confirm('Удалить аккаунт #{{ acc.id }}?')">🗑</a></td>
+                    <td style="display:flex; gap:4px;">
+                        {% if acc.status == 'new' %}
+                        <a href="/accounts/{{ acc.id }}/status/warming" class="btn btn-sm" style="background:#3b82f6; color:#fff;">➡️ Прогрев</a>
+                        {% elif acc.status == 'warming' %}
+                        <a href="/accounts/{{ acc.id }}/status/ready" class="btn btn-sm btn-success">✅ Ready</a>
+                        {% elif acc.status == 'ready' %}
+                        <a href="/accounts/{{ acc.id }}/status/paused" class="btn btn-sm" style="background:#64748b; color:#fff;">⏸ Пауза</a>
+                        {% endif %}
+                        <a href="/accounts/{{ acc.id }}/delete" class="btn btn-danger btn-sm" onclick="return confirm('Удалить аккаунт #{{ acc.id }}?')">🗑</a>
+                    </td>
                 </tr>
                 {% else %}
                 <tr><td colspan="8" style="text-align:center; color:#64748b; padding:32px;">Нет аккаунтов. Добавьте первый!</td></tr>
