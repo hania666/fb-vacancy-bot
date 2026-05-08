@@ -168,13 +168,22 @@ class PostingEngine:
             time.sleep(random.uniform(2.0, 3.0))
 
             # ── STEP 3: Find the real contenteditable textbox ────────────
+            # Real composer has aria-placeholder "Створіть публічний допис..." 
+            # and data-lexical-editor="true"
             post_box = None
             textbox_xpaths = [
-                # Inside modal dialog
-                "//div[@role='dialog']//div[@contenteditable='true' and contains(@class,'notranslate')]",
+                # Most specific: lexical editor with role=textbox
+                "//div[@role='textbox' and @contenteditable='true' and @data-lexical-editor='true']",
+                # By aria-placeholder text (multilingual)
+                "//div[@contenteditable='true' and contains(@aria-placeholder,'Створіть')]",
+                "//div[@contenteditable='true' and contains(@aria-placeholder,'Создайте')]",
+                "//div[@contenteditable='true' and contains(@aria-placeholder,'Create')]",
+                "//div[@contenteditable='true' and @aria-placeholder]",
+                # Inside dialog
+                "//div[@role='dialog']//div[@contenteditable='true' and @role='textbox']",
                 "//div[@role='dialog']//div[@contenteditable='true']",
-                # Inside form (no dialog)
-                "//form//div[@contenteditable='true' and contains(@class,'notranslate')]",
+                # Inside form
+                "//form//div[@contenteditable='true' and @role='textbox']",
                 "//form//div[@contenteditable='true']",
                 # Generic fallback
                 "//div[@contenteditable='true' and contains(@class,'notranslate')]",
@@ -262,11 +271,21 @@ class PostingEngine:
                     uploaded = False
                     # First try to click "Photo/Video" button to reveal file input
                     for photo_btn_xpath in [
+                        # Direct file input (best — bypasses button click)
+                        "//div[@role='dialog']//input[@type='file' and contains(@accept,'image')]",
+                        "//input[@type='file' and contains(@accept,'image')]",
+                        "//input[@type='file' and contains(@accept,'photo')]",
+                        # Photo/Video button by aria-label
                         "//div[@aria-label='Фото/відео']",
                         "//div[@aria-label='Photo/video']",
                         "//div[@aria-label='Фото/видео']",
-                        "//span[contains(text(),'Фото') and contains(text(),'відео')]/..",
-                        "//input[@type='file' and contains(@accept,'image')]",
+                        "//div[@aria-label='Додати фото/відео']",
+                        "//div[@aria-label='Add photo/video']",
+                        # By image icon inside dialog (the webp icon you mentioned)
+                        "//div[@role='dialog']//div[@role='button' and .//img[contains(@src,'8_VnccIZfRa') or contains(@src,'.webp')]]",
+                        # Span text fallback
+                        "//span[contains(text(),'Фото') and contains(text(),'відео')]/ancestor::div[@role='button'][1]",
+                        "//span[contains(text(),'Photo') and contains(text(),'video')]/ancestor::div[@role='button'][1]",
                     ]:
                         try:
                             el = driver.find_element(By.XPATH, photo_btn_xpath)
