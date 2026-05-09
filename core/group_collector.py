@@ -225,3 +225,134 @@ def collect_groups(
             driver.quit()
         except:
             pass
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Collect groups from someone else's Facebook profile URL
+# ════════════════════════════════════════════════════════════════════════════
+
+def collect_groups_from_profile_url(
+    profile_url: str,
+    ix_profile_id: str,
+    max_groups: int = 200,
+) -> dict:
+    """
+    Visit a target Facebook profile via our iXBrowser session and scrape
+    the list of groups they are a member of (the public ones at least).
+
+    Args:
+        profile_url: e.g. "https://www.facebook.com/zuck" or
+                     "https://www.facebook.com/profile.php?id=100012345678"
+        ix_profile_id: ID of OUR iXBrowser profile (logged-in account)
+        max_groups: max groups to collect
+
+    Returns:
+        {"status": "success", "found": N, "new_added": M, "urls": [...]}
+        or {"status": "error", "message": "..."}
+    """
+    profile_url = profile_url.strip().rstrip("/")
+    if "facebook.com" not in profile_url:
+        return {"status": "error", "message": "Invalid Facebook URL"}
+
+    # Build the groups tab URL for this profile
+    if "/profile.php?id=" in profile_url:
+        # /profile.php?id=123 → /profile.php?id=123&sk=groups
+        groups_url = profile_url + ("&sk=groups" if "?" in profile_url else "?sk=groups")
+    else:
+        # /username → /username/groups or /groups_managed
+        groups_url = profile_url + "/groups"
+
+    logger.info(f"🌐 Opening target profile groups: {groups_url}")
+
+    client = IXBrowserClient()
+    driver = client.open_profile_and_get_driver(ix_profile_id)
+    if not driver:
+        return {"status": "error", "message": "Failed to open iXBrowser profile"}
+
+    try:
+        driver.get(groups_url)
+        time.sleep(random.uniform(4.0, 6.0))
+
+        cur = driver.current_url.lower()
+        if "login" in cur or "checkpoint" in cur:
+            return {"status": "error", "message": "Not logged in or checkpoint"}
+
+        # If the user has no public group list, FB redirects to main profile
+        if "/groups" not in cur and "sk=groups" not in cur:
+            logger.warning("⚠️ Profile has no public groups list (redirected back)")
+            return {"status": "error",
+                    "message": "Этот профиль скрыл список групп (приватный)"}
+
+        # Scroll to load all groups
+        all_urls = set()
+        no_new_streak = 0
+        for scroll in range(60):
+            # Collect group links currently visible
+            links = driver.find_elements(By.TAG_NAME, "a")
+            prev = len(all_urls)
+            for link in links:
+                try:
+                    href = link.get_attribute("href") or ""
+                    if "/groups/" not in href:
+                        continue
+                    # Strip query/fragment, take first path segment after /groups/
+                    path = href.split("?")[0].split("#")[0].rstrip("/")
+                    parts = path.split("/groups/")
+                    if len(parts) < 2:
+                        continue
+                    gid = parts[1].split("/")[0]
+                    if not gid or gid in (
+                        "feed", "joins", "search", "discover", "manage",
+                        "create", "saved", "invite", "requests", "pending",
+                    ) or gid.startswith("_"):
+                        continue
+                    all_urls.add(f"https://www.facebook.com/groups/{gid}/")
+                except Exception:
+                    pass
+
+            new = len(all_urls) - prev
+            logger.info(f"   Scroll {scroll+1}: +{new} new | total {len(all_urls)}")
+
+            if new == 0:
+                no_new_streak += 1
+                if no_new_streak >= 5:
+                    logger.info("   ✅ No new groups for 5 scrolls — done")
+                    break
+            else:
+                no_new_streak = 0
+
+            if len(all_urls) >= max_groups:
+                logger.info(f"   ✅ Reached max ({max_groups})")
+                break
+
+            # Scroll using multiple strategies
+            try:
+                from selenium.webdriver.common.keys import Keys as _Keys
+                driver.find_element(By.TAG_NAME, "body").send_keys(_Keys.END)
+            except Exception:
+                driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            time.sleep(random.uniform(2.5, 4.0))
+
+        url_list = sorted(all_urls)
+        logger.info(f"📋 Total found: {len(url_list)} groups")
+
+        # Save to DB
+        groups_to_save = [{"url": u, "name": "", "category": ""} for u in url_list]
+        new_count = save_groups_to_db(groups_to_save)
+
+        return {
+            "status": "success",
+            "found": len(url_list),
+            "new_added": new_count,
+            "urls": url_list,
+        }
+
+    except Exception as e:
+        logger.error(f"Profile group scraping error: {e}")
+        return {"status": "error", "message": str(e)}
+    finally:
+        try:
+            client.close_profile(ix_profile_id)
+            driver.quit()
+        except Exception:
+            pass
