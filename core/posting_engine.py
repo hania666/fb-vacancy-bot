@@ -273,19 +273,52 @@ class PostingEngine:
                 "//div[@contenteditable='true']",
             ]
 
+            # First wait briefly for composer to render
+            time.sleep(1.0)
+
+            # Find textbox NOT inside an article (= not a comment field)
             for xpath in textbox_xpaths:
                 try:
-                    post_box = WebDriverWait(driver, 6).until(
-                        EC.element_to_be_clickable((By.XPATH, xpath))
-                    )
-                    logger.info(f"✅ Found textbox: {xpath[:60]}")
-                    break
+                    candidates = driver.find_elements(By.XPATH, xpath)
+                    if not candidates:
+                        continue
+
+                    for el in candidates:
+                        # Skip if inside an article (= comment box on someone's post)
+                        is_in_article = driver.execute_script("""
+                            let node = arguments[0];
+                            while (node && node !== document.body) {
+                                if (node.getAttribute && node.getAttribute('role') === 'article') {
+                                    return true;
+                                }
+                                node = node.parentElement;
+                            }
+                            return false;
+                        """, el)
+
+                        if is_in_article:
+                            continue
+
+                        # Verify visible
+                        is_visible = driver.execute_script("""
+                            const r = arguments[0].getBoundingClientRect();
+                            return r.width > 0 && r.height > 0;
+                        """, el)
+                        if not is_visible:
+                            continue
+
+                        post_box = el
+                        logger.info(f"✅ Found composer textbox via: {xpath[:60]}")
+                        break
+
+                    if post_box:
+                        break
                 except Exception:
                     continue
 
             if not post_box:
                 _screenshot("no_textbox")
-                return (False, "Composer opened but textbox not found")
+                return (False, "Composer textbox not found (only comment fields available)")
 
             # Click to focus
             try:
@@ -506,38 +539,65 @@ class PostingEngine:
             time.sleep(1.0)
             publish_clicked = False
 
+            # Search publish button INSIDE the dialog ONLY — never use Ctrl+Enter
+            # because that submits a comment if focus is wrong.
             publish_xpaths = [
+                # Inside dialog with aria-label
+                "//div[@role='dialog']//div[@aria-label='Опублікувати']",
+                "//div[@role='dialog']//div[@aria-label='Опубликовать']",
+                "//div[@role='dialog']//div[@aria-label='Post']",
+                "//div[@role='dialog']//div[@aria-label='Publish']",
+                # Inside dialog with text
+                "//div[@role='dialog']//span[normalize-space(text())='Опублікувати']/ancestor::div[@role='button'][1]",
+                "//div[@role='dialog']//span[normalize-space(text())='Опубликовать']/ancestor::div[@role='button'][1]",
+                "//div[@role='dialog']//span[normalize-space(text())='Publish']/ancestor::div[@role='button'][1]",
+                "//div[@role='dialog']//span[normalize-space(text())='Post']/ancestor::div[@role='button'][1]",
+                # Fallback: aria-label outside dialog (but still verify it's not a post action)
                 "//div[@aria-label='Опублікувати']",
                 "//div[@aria-label='Опубликовать']",
-                "//div[@aria-label='Post']",
                 "//div[@aria-label='Publish']",
-                "//span[normalize-space(text())='Опублікувати']/ancestor::div[@role='button'][1]",
-                "//span[normalize-space(text())='Опубликовать']/ancestor::div[@role='button'][1]",
-                "//span[normalize-space(text())='Publish']/ancestor::div[@role='button'][1]",
-                "//span[normalize-space(text())='Post']/ancestor::div[@role='button'][1]",
             ]
 
             for xpath in publish_xpaths:
                 try:
-                    btn = WebDriverWait(driver, 4).until(
-                        EC.element_to_be_clickable((By.XPATH, xpath))
-                    )
-                    driver.execute_script("arguments[0].click();", btn)
-                    publish_clicked = True
-                    logger.info(f"✅ Publish clicked")
-                    time.sleep(random.uniform(2.0, 3.0))
-                    break
+                    candidates = driver.find_elements(By.XPATH, xpath)
+                    for btn in candidates:
+                        # Skip if inside an article (would be a comment Submit)
+                        is_in_article = driver.execute_script("""
+                            let node = arguments[0];
+                            while (node && node !== document.body) {
+                                if (node.getAttribute && node.getAttribute('role') === 'article') return true;
+                                node = node.parentElement;
+                            }
+                            return false;
+                        """, btn)
+                        if is_in_article:
+                            continue
+
+                        # Make sure visible and clickable
+                        is_visible = driver.execute_script("""
+                            const r = arguments[0].getBoundingClientRect();
+                            return r.width > 0 && r.height > 0;
+                        """, btn)
+                        if not is_visible:
+                            continue
+
+                        driver.execute_script("arguments[0].click();", btn)
+                        publish_clicked = True
+                        logger.info(f"✅ Publish clicked via: {xpath[:55]}")
+                        time.sleep(random.uniform(2.5, 3.5))
+                        break
+
+                    if publish_clicked:
+                        break
                 except Exception:
                     continue
 
             if not publish_clicked:
-                # Fallback: Ctrl+Enter
-                try:
-                    post_box.send_keys(Keys.CONTROL + Keys.ENTER)
-                    time.sleep(2.0)
-                    logger.info("⌨️ Sent Ctrl+Enter as publish fallback")
-                except Exception:
-                    pass
+                # No Ctrl+Enter fallback — too risky, posts as comment
+                _screenshot("no_publish_btn")
+                logger.error("❌ Could not find Publish button — aborting to prevent comment-spam")
+                return (False, "Publish button not found in composer dialog")
 
             # ── STEP 7: Verify ────────────────────────────────────────────
             time.sleep(1.0)
