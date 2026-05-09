@@ -108,7 +108,27 @@ class PostingEngine:
         try:
             # ── STEP 1: Navigate to group ────────────────────────────────
             logger.info(f"🌐 Navigating to: {group_url}")
-            driver.get(group_url)
+            # Clear any leftover native browser alert from previous group
+            try:
+                alert = driver.switch_to.alert
+                logger.warning(f"⚠️ Dismissing leftover alert: {alert.text[:80]}")
+                alert.accept()
+            except Exception:
+                pass
+
+            try:
+                driver.get(group_url)
+            except Exception as nav_err:
+                # If a JS alert blocks navigation — accept it and retry
+                if "alert" in str(nav_err).lower():
+                    try:
+                        driver.switch_to.alert.accept()
+                        time.sleep(0.5)
+                        driver.get(group_url)
+                    except Exception:
+                        return (False, f"Navigation blocked by alert: {nav_err}")
+                else:
+                    raise
             time.sleep(random.uniform(1.5, 2.5))
 
             cur = driver.current_url.lower()
@@ -542,17 +562,28 @@ class PostingEngine:
             # Search publish button INSIDE the dialog ONLY — never use Ctrl+Enter
             # because that submits a comment if focus is wrong.
             publish_xpaths = [
-                # Inside dialog with aria-label
+                # Inside dialog with aria-label (any language)
                 "//div[@role='dialog']//div[@aria-label='Опублікувати']",
                 "//div[@role='dialog']//div[@aria-label='Опубликовать']",
                 "//div[@role='dialog']//div[@aria-label='Post']",
                 "//div[@role='dialog']//div[@aria-label='Publish']",
+                # Moderated groups: "Submit for review" / "Надіслати на розгляд"
+                "//div[@role='dialog']//div[@aria-label='Надіслати на розгляд']",
+                "//div[@role='dialog']//div[@aria-label='Отправить на рассмотрение']",
+                "//div[@role='dialog']//div[@aria-label='Submit for review']",
+                "//div[@role='dialog']//div[@aria-label='Send for approval']",
                 # Inside dialog with text
                 "//div[@role='dialog']//span[normalize-space(text())='Опублікувати']/ancestor::div[@role='button'][1]",
                 "//div[@role='dialog']//span[normalize-space(text())='Опубликовать']/ancestor::div[@role='button'][1]",
                 "//div[@role='dialog']//span[normalize-space(text())='Publish']/ancestor::div[@role='button'][1]",
                 "//div[@role='dialog']//span[normalize-space(text())='Post']/ancestor::div[@role='button'][1]",
-                # Fallback: aria-label outside dialog (but still verify it's not a post action)
+                # Moderated text variants
+                "//div[@role='dialog']//span[normalize-space(text())='Надіслати']/ancestor::div[@role='button'][1]",
+                "//div[@role='dialog']//span[normalize-space(text())='Отправить']/ancestor::div[@role='button'][1]",
+                "//div[@role='dialog']//span[normalize-space(text())='Submit']/ancestor::div[@role='button'][1]",
+                # Generic enabled submit-style button at bottom of dialog (last resort)
+                "(//div[@role='dialog']//div[@role='button' and not(@aria-disabled='true')])[last()]",
+                # Fallback: aria-label outside dialog
                 "//div[@aria-label='Опублікувати']",
                 "//div[@aria-label='Опубликовать']",
                 "//div[@aria-label='Publish']",
