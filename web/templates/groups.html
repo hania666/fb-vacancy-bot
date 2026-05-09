@@ -65,6 +65,15 @@
                 <input type="file" name="file" accept=".txt,.csv">
                 <button type="submit" class="btn btn-success">📂 Загрузить файл</button>
             </form>
+
+            <div style="flex:1; min-width:300px; background:#1e293b; border:1px solid #334155; border-radius:12px; padding:24px; display:flex; flex-direction:column; gap:12px;">
+                <h3 style="color:#f1f5f9;">🔍 Парсинг чужого профиля</h3>
+                <input type="text" id="scrapeProfileUrl" placeholder="https://www.facebook.com/username">
+                <input type="number" id="scrapeAccId" placeholder="ID моего аккаунта (через который смотреть)" value="1">
+                <input type="number" id="scrapeMax" placeholder="Макс. групп" value="200">
+                <button onclick="scrapeProfile()" class="btn btn-success" id="scrapeBtn">🚀 Спарсить группы</button>
+                <span id="scrapeStatus" style="color:#94a3b8; font-size:13px;"></span>
+            </div>
         </div>
 
         <div style="display:flex; gap:8px; flex-wrap:wrap; margin: 16px 0; align-items:center;">
@@ -116,6 +125,49 @@ async function dedupGroups() {
         status.style.color = '#ef4444';
     } finally {
         btn.disabled = false; btn.textContent = '🧹 Удалить дубли';
+    }
+}
+
+async function scrapeProfile() {
+    const url = document.getElementById('scrapeProfileUrl').value.trim();
+    const accId = parseInt(document.getElementById('scrapeAccId').value);
+    const maxG = parseInt(document.getElementById('scrapeMax').value) || 200;
+    const btn = document.getElementById('scrapeBtn');
+    const status = document.getElementById('scrapeStatus');
+
+    if (!url || !url.includes('facebook.com')) {
+        status.textContent = '❌ Нужен валидный FB URL';
+        status.style.color = '#ef4444';
+        return;
+    }
+    if (!accId) {
+        status.textContent = '❌ Укажи ID аккаунта';
+        status.style.color = '#ef4444';
+        return;
+    }
+
+    btn.disabled = true; btn.textContent = '⏳ Запуск...';
+    status.textContent = '';
+
+    try {
+        const res = await fetch('/actions/scrape-profile-groups', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({profile_url: url, account_id: accId, max_groups: maxG}),
+        });
+        const data = await res.json();
+        if (data.status === 'started') {
+            status.textContent = `✅ ${data.message} Обнови страницу через 1-2 мин.`;
+            status.style.color = '#22c55e';
+        } else {
+            status.textContent = `❌ ${data.message}`;
+            status.style.color = '#ef4444';
+        }
+    } catch (e) {
+        status.textContent = '❌ Ошибка соединения';
+        status.style.color = '#ef4444';
+    } finally {
+        btn.disabled = false; btn.textContent = '🚀 Спарсить группы';
     }
 }
 
