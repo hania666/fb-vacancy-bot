@@ -254,13 +254,26 @@ def collect_groups_from_profile_url(
     if "facebook.com" not in profile_url:
         return {"status": "error", "message": "Invalid Facebook URL"}
 
+    # Strip query string and fragment so we don't build broken URLs like
+    # /username?locale=ru_RU/groups
+    from urllib.parse import urlsplit, urlunsplit
+    parts = urlsplit(profile_url)
+    path = parts.path.rstrip("/")
+    base_url = urlunsplit((parts.scheme, parts.netloc, path, "", ""))
+
     # Build the groups tab URL for this profile
-    if "/profile.php?id=" in profile_url:
-        # /profile.php?id=123 → /profile.php?id=123&sk=groups
-        groups_url = profile_url + ("&sk=groups" if "?" in profile_url else "?sk=groups")
+    if "/profile.php" in base_url:
+        # /profile.php?id=123 — sk=groups goes in query
+        # base_url here has no query (we stripped), so re-add id and sk
+        from urllib.parse import parse_qs, urlencode
+        qs = parse_qs(parts.query)
+        user_id = qs.get("id", [""])[0]
+        if not user_id:
+            return {"status": "error", "message": "profile.php URL missing ?id="}
+        groups_url = f"{base_url}?id={user_id}&sk=groups"
     else:
-        # /username → /username/groups or /groups_managed
-        groups_url = profile_url + "/groups"
+        # /username or /username/ → /username/groups
+        groups_url = base_url + "/groups"
 
     logger.info(f"🌐 Opening target profile groups: {groups_url}")
 
