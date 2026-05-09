@@ -29,7 +29,7 @@ class PostingEngine:
     # Posting limits per account
     MAX_POSTS_PER_DAY = 30          # Max posts per account per day
     MIN_DELAY_BETWEEN_POSTS = 30    # Seconds
-    MAX_DELAY_BETWEEN_POSTS = 120   # Seconds
+    MAX_DELAY_BETWEEN_POSTS = 60    # Seconds (faster, riskier)
     POSTS_PER_BATCH = 10            # Posts before a longer break
     BATCH_BREAK_MIN = 300           # 5 min break between batches
     BATCH_BREAK_MAX = 600           # 10 min
@@ -109,7 +109,7 @@ class PostingEngine:
             # ── STEP 1: Navigate to group ────────────────────────────────
             logger.info(f"🌐 Navigating to: {group_url}")
             driver.get(group_url)
-            time.sleep(random.uniform(4.0, 6.0))
+            time.sleep(random.uniform(1.5, 2.5))
 
             cur = driver.current_url.lower()
             if "checkpoint" in cur:
@@ -137,7 +137,7 @@ class PostingEngine:
                             close_btn = driver.find_element(By.XPATH,
                                 "//div[@role='dialog']//*[@aria-label='Закрити' or @aria-label='Close']")
                             driver.execute_script("arguments[0].click();", close_btn)
-                            time.sleep(0.5)
+                            time.sleep(0.3)
                         except Exception:
                             pass
                         logger.warning("⛔ Membership pending — not a full member yet")
@@ -147,7 +147,7 @@ class PostingEngine:
 
             # Dismiss any popups (rules, cookie banners, etc.) — multi-step
             self._dismiss_popups(driver)
-            time.sleep(0.5)
+            time.sleep(0.3)
             self._dismiss_popups(driver)  # second pass for multi-step popups
 
             # Re-check for blocker after popups (rules popup may hide membership question)
@@ -230,7 +230,7 @@ class PostingEngine:
 
                             # Scroll element into view (it's safe now — we know it's NOT a comment)
                             driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
-                            time.sleep(0.5)
+                            time.sleep(0.3)
                             driver.execute_script("arguments[0].click();", el)
                             logger.info(f"✅ Clicked main composer via: {xpath[:65]}")
                             placeholder_clicked = True
@@ -248,7 +248,7 @@ class PostingEngine:
                 return (False, "Could not find main composer (only comment boxes found)")
 
             # Wait for composer to open (dialog or expanded form)
-            time.sleep(random.uniform(2.0, 3.0))
+            time.sleep(random.uniform(1.5, 2.5))
 
             # ── STEP 3: Find the real contenteditable textbox ────────────
             # Real composer has aria-placeholder "Створіть публічний допис..." 
@@ -323,7 +323,7 @@ class PostingEngine:
             # Click to focus
             try:
                 driver.execute_script("arguments[0].click();", post_box)
-                time.sleep(0.5)
+                time.sleep(0.3)
             except Exception:
                 pass
 
@@ -529,7 +529,7 @@ class PostingEngine:
                                 continue
 
                     if uploaded:
-                        time.sleep(random.uniform(3.0, 5.0))  # wait for upload
+                        time.sleep(random.uniform(2.0, 3.5))  # wait for upload
                     else:
                         logger.warning(f"⚠️ Could not upload photo: {abs_path}")
                 else:
@@ -930,7 +930,7 @@ class PostingEngine:
                 logger.info(f"Navigating to: {target_url}")
                 try:
                     driver.get(target_url)
-                    time.sleep(random.uniform(4.0, 6.0))
+                    time.sleep(random.uniform(2.0, 3.0))
                 except Exception as e:
                     logger.warning(f"Navigation failed: {e}")
                     continue
