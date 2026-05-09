@@ -338,13 +338,45 @@ def collect_groups_from_profile_url(
                 logger.info(f"   ✅ Reached max ({max_groups})")
                 break
 
-            # Scroll using multiple strategies
+            # Scroll — try multiple strategies because FB renders groups list
+            # in an internal scrollable container, not document.body
+            scroll_strategy = scroll % 4
             try:
-                from selenium.webdriver.common.keys import Keys as _Keys
-                driver.find_element(By.TAG_NAME, "body").send_keys(_Keys.END)
-            except Exception:
-                driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(random.uniform(2.5, 4.0))
+                if scroll_strategy == 0:
+                    # Standard window scroll
+                    driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                elif scroll_strategy == 1:
+                    # Keys.END on body
+                    from selenium.webdriver.common.keys import Keys as _Keys
+                    driver.find_element(By.TAG_NAME, "body").send_keys(_Keys.END)
+                elif scroll_strategy == 2:
+                    # Scroll inner container (where groups live)
+                    driver.execute_script("""
+                        const candidates = [
+                            document.querySelector('[role="main"]'),
+                            document.querySelector('[data-pagelet*="ProfileTilesFeed"]'),
+                            document.querySelector('[data-pagelet*="ProfileTimeline"]'),
+                            document.querySelector('div[style*="overflow"]'),
+                        ];
+                        for (const el of candidates) {
+                            if (el && el.scrollHeight > window.innerHeight) {
+                                el.scrollTop = el.scrollHeight;
+                                return;
+                            }
+                        }
+                        window.scrollTo(0, document.body.scrollHeight);
+                    """)
+                else:
+                    # Scroll up briefly then down (helps lazy-loading re-trigger)
+                    driver.execute_script("window.scrollBy(0, -500);")
+                    time.sleep(0.8)
+                    driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            except Exception as e:
+                logger.warning(f"scroll failed: {e}")
+
+            # Longer wait every 5 scrolls (FB sometimes pauses lazy-load)
+            wait = random.uniform(4.0, 5.5) if scroll % 5 == 0 else random.uniform(2.5, 4.0)
+            time.sleep(wait)
 
         url_list = sorted(all_urls)
         logger.info(f"📋 Total found: {len(url_list)} groups")
