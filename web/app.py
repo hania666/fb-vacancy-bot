@@ -836,7 +836,7 @@ def action_post_db_all(vacancy_id: int,
 
 @app.get("/actions/join-groups/{account_id}")
 def action_join_groups(account_id: int, max_joins: int = 30,
-                        delay_min: int = 30, delay_max: int = 90):
+                        delay_min: int = 10, delay_max: int = 25):
     """
     Subscribe single account to all DB groups it isn't already in.
     """
@@ -882,8 +882,8 @@ def action_join_groups(account_id: int, max_joins: int = 30,
 
 @app.get("/actions/join-groups-all")
 def action_join_groups_all(max_joins: int = 30,
-                            delay_min: int = 30, delay_max: int = 90,
-                            between_accounts: int = 120):
+                            delay_min: int = 10, delay_max: int = 25,
+                            between_accounts: int = 60):
     """
     Subscribe ALL ready accounts to all DB groups (sequentially).
     """
