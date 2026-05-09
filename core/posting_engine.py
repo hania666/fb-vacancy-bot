@@ -1411,3 +1411,225 @@ class PostingEngine:
             db.close()
 
         return {"removed": removed, "normalised": normalised}
+
+    # ════════════════════════════════════════════════════════════════════════
+    # Bulk operations: post from all ready accounts, mass-join groups
+    # ════════════════════════════════════════════════════════════════════════
+
+    def run_posting_from_db_all_accounts(
+        self,
+        vacancy_id: int,
+        delay_min: int = None,
+        delay_max: int = None,
+        between_accounts_delay: int = 60,
+        stop_flag: threading.Event = None,
+    ) -> dict:
+        """
+        Run posting from DB for ALL accounts with status=='ready'.
+        Each account posts to all unposted groups one by one.
+        """
+        db = SessionLocal()
+        ready_accounts = db.query(Account).filter(Account.status == "ready").all()
+        ready_ids = [a.id for a in ready_accounts]
+        names = [(a.id, a.login) for a in ready_accounts]
+        db.close()
+
+        if not ready_ids:
+            return {"status": "error", "message": "Нет аккаунтов в статусе 'ready'"}
+
+        logger.info(f"📤 Запуск постинга с {len(ready_ids)} ready аккаунтов")
+        all_results = []
+
+        for idx, (acc_id, login) in enumerate(names):
+            if stop_flag and stop_flag.is_set():
+                logger.info("⏹ Stop requested between accounts")
+                break
+
+            logger.info(f"━━━ ({idx+1}/{len(names)}) Аккаунт #{acc_id} '{login}' ━━━")
+            try:
+                result = self.run_posting_from_db(
+                    account_id=acc_id,
+                    vacancy_id=vacancy_id,
+                    delay_min=delay_min,
+                    delay_max=delay_max,
+                    stop_flag=stop_flag,
+                )
+                all_results.append({
+                    "account_id": acc_id,
+                    "login": login,
+                    "result": result,
+                })
+                logger.info(f"   ✅ Аккаунт #{acc_id} закончил: "
+                            f"{result.get('successful', 0)} опубликовано, "
+                            f"{result.get('failed', 0)} ошибок")
+            except Exception as e:
+                logger.error(f"❌ Аккаунт #{acc_id} упал: {e}")
+                all_results.append({"account_id": acc_id, "result": {"status": "error", "message": str(e)}})
+
+            # Pause between accounts
+            if idx < len(names) - 1 and not (stop_flag and stop_flag.is_set()):
+                logger.info(f"⏳ Пауза {between_accounts_delay}с перед следующим аккаунтом...")
+                for _ in range(between_accounts_delay):
+                    if stop_flag and stop_flag.is_set():
+                        break
+                    time.sleep(1)
+
+        total_posted = sum(r.get("result", {}).get("successful", 0) for r in all_results)
+        total_failed = sum(r.get("result", {}).get("failed", 0) for r in all_results)
+        return {
+            "status": "done",
+            "accounts_processed": len(all_results),
+            "total_posted": total_posted,
+            "total_failed": total_failed,
+            "details": all_results,
+        }
+
+
+    def join_all_db_groups_with_account(
+        self,
+        account_id: int,
+        max_joins: int = 50,
+        delay_min: int = 30,
+        delay_max: int = 90,
+        stop_flag: threading.Event = None,
+    ) -> dict:
+        """
+        Subscribe a single account to all groups in the DB it is not already
+        a member of. Visits each group, looks for the 'Join Group' button, clicks it,
+        handles confirmation popups, then moves on with a random delay.
+        """
+        db = SessionLocal()
+        account = db.query(Account).filter(Account.id == account_id).first()
+        if not account:
+            db.close()
+            return {"status": "error", "message": "Account not found"}
+        if not account.ix_profile_id:
+            db.close()
+            return {"status": "error", "message": "No iXBrowser profile ID"}
+
+        pid = account.ix_profile_id
+        all_groups = db.query(Group).all()
+        db.close()
+
+        if not all_groups:
+            return {"status": "error", "message": "В БД нет групп"}
+
+        driver = self.client.open_profile_and_get_driver(pid)
+        if not driver:
+            return {"status": "error", "message": "Failed to open iXBrowser profile"}
+
+        joined = 0
+        already = 0
+        failed = 0
+        skipped = 0
+
+        try:
+            for idx, group in enumerate(all_groups):
+                if stop_flag and stop_flag.is_set():
+                    logger.info("⏹ Stop requested")
+                    break
+                if joined >= max_joins:
+                    logger.info(f"✅ Достигнут лимит вступлений: {max_joins}")
+                    break
+
+                logger.info(f"📌 ({idx+1}/{len(all_groups)}) → {group.url}")
+                try:
+                    driver.get(group.url)
+                    time.sleep(random.uniform(3.0, 5.0))
+
+                    cur = driver.current_url.lower()
+                    if "checkpoint" in cur:
+                        logger.error("🚫 Checkpoint — stopping")
+                        break
+
+                    # Try to find a Join button — XPath covers UA/RU/EN labels
+                    join_xpaths = [
+                        "//div[@aria-label='Приєднатися до групи']",
+                        "//div[@aria-label='Присоединиться к группе']",
+                        "//div[@aria-label='Join group']",
+                        "//div[@aria-label='Join Group']",
+                        "//span[normalize-space(text())='Приєднатися']/ancestor::div[@role='button'][1]",
+                        "//span[normalize-space(text())='Присоединиться']/ancestor::div[@role='button'][1]",
+                        "//span[normalize-space(text())='Join']/ancestor::div[@role='button'][1]",
+                        "//span[normalize-space(text())='Join group']/ancestor::div[@role='button'][1]",
+                    ]
+
+                    btn = None
+                    for xp in join_xpaths:
+                        try:
+                            btn = WebDriverWait(driver, 3).until(
+                                EC.element_to_be_clickable((By.XPATH, xp))
+                            )
+                            break
+                        except Exception:
+                            continue
+
+                    if not btn:
+                        # Maybe already member — check for "Joined"/"Приєднався" indicator
+                        try:
+                            driver.find_element(
+                                By.XPATH,
+                                "//span[contains(text(),'Приєднався') or contains(text(),'Приєдналась') or "
+                                "contains(text(),'Joined') or contains(text(),'Присоединились')]"
+                            )
+                            already += 1
+                            logger.info("   ☑ Уже участник")
+                        except Exception:
+                            skipped += 1
+                            logger.info("   ⏭ Кнопка вступления не найдена — пропуск")
+                        continue
+
+                    driver.execute_script("arguments[0].click();", btn)
+                    time.sleep(random.uniform(2.0, 3.5))
+
+                    # Sometimes a rules-acceptance dialog appears — close/agree it
+                    try:
+                        for cxp in [
+                            "//div[@role='dialog']//span[normalize-space(text())='Принять']/..",
+                            "//div[@role='dialog']//span[normalize-space(text())='Прийняти']/..",
+                            "//div[@role='dialog']//span[normalize-space(text())='Agree']/..",
+                            "//div[@role='dialog']//span[normalize-space(text())='Submit']/..",
+                            "//div[@role='dialog']//span[normalize-space(text())='Надіслати']/..",
+                        ]:
+                            try:
+                                cb = driver.find_element(By.XPATH, cxp)
+                                driver.execute_script("arguments[0].click();", cb)
+                                time.sleep(1)
+                                break
+                            except Exception:
+                                continue
+                    except Exception:
+                        pass
+
+                    joined += 1
+                    logger.info(f"   ✅ Вступил! (всего: {joined})")
+
+                except Exception as e:
+                    failed += 1
+                    logger.warning(f"   ❌ Ошибка: {e}")
+
+                # Delay between joins
+                if idx < len(all_groups) - 1 and joined < max_joins:
+                    delay = random.randint(delay_min, delay_max)
+                    logger.info(f"   ⏳ {delay}s до следующей группы...")
+                    for _ in range(delay):
+                        if stop_flag and stop_flag.is_set():
+                            break
+                        time.sleep(1)
+
+        except Exception as e:
+            logger.error(f"join_all_db_groups error: {e}")
+        finally:
+            try:
+                self.client.close_profile(pid)
+                driver.quit()
+            except Exception:
+                pass
+
+        return {
+            "status": "done",
+            "joined": joined,
+            "already_member": already,
+            "failed": failed,
+            "skipped_no_button": skipped,
+        }
