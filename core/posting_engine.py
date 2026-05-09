@@ -122,39 +122,61 @@ class PostingEngine:
             time.sleep(0.5)
             self._dismiss_popups(driver)  # second pass for multi-step popups
 
-            # ── STEP 2: Click the "Напишіть щось..." placeholder ─────────
-            # FB renders a fake input that needs to be clicked to open the real composer
+            # ── STEP 2: Click the main "Напишіть щось..." composer ─────────
+            # CRITICAL: must click the GROUP composer at the top, NOT a comment box
+            # under some user's post. Strategy: scroll to top, then prefer aria-label
+            # selectors that only match the main composer.
             placeholder_clicked = False
 
-            # Try all known placeholder selectors
+            # Scroll to the very top of the group page first
+            driver.execute_script("window.scrollTo(0, 0);")
+            time.sleep(1.0)
+
+            # Selectors ordered from MOST specific (only matches main composer)
+            # to LEAST specific. The first 3 (aria-label) are unique to the post
+            # composer and never match comment fields.
             placeholder_xpaths = [
-                # Ukrainian
-                "//span[contains(text(),'Напишіть щось')]",
-                "//div[contains(text(),'Напишіть щось')]",
-                # Russian
-                "//span[contains(text(),'Напишите')]",
-                "//div[contains(text(),'Напишите')]",
-                # English
-                "//span[contains(text(),'Write something')]",
-                "//div[contains(text(),'Write something')]",
-                # Generic: any div with role=button that contains the placeholder
-                "//div[@role='button' and .//*[contains(text(),'Напишіть')]]",
-                "//div[@role='button' and .//*[contains(text(),'Write')]]",
-                # Fallback: any aria-label on the compose area
+                # Aria-label selectors — these ONLY exist on the main composer
+                "//div[@aria-label='Створіть публічний допис…']",
+                "//div[@aria-label='Створіть публічний допис...']",
+                "//div[@aria-label='Створіть публічний допис']",
+                "//div[@aria-label='Создайте общедоступную публикацию...']",
+                "//div[@aria-label='Создайте общедоступную публикацию…']",
+                "//div[@aria-label='Create a public post...']",
+                "//div[@aria-label='Create a public post…']",
+                # Generic post composer aria-labels
                 "//div[@aria-label='Створити допис']",
                 "//div[@aria-label='Create post']",
                 "//div[@aria-label='Создать публикацию']",
+                # Placeholder text — but only FIRST occurrence (top of page = main composer)
+                "(//span[contains(text(),'Напишіть щось')])[1]",
+                "(//div[contains(text(),'Напишіть щось')])[1]",
+                "(//span[contains(text(),'Напишите что-нибудь')])[1]",
+                "(//span[contains(text(),'Write something')])[1]",
             ]
 
             for xpath in placeholder_xpaths:
                 try:
-                    el = WebDriverWait(driver, 4).until(
+                    el = WebDriverWait(driver, 3).until(
                         EC.element_to_be_clickable((By.XPATH, xpath))
                     )
-                    driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
-                    time.sleep(0.5)
+
+                    # Verify element is in TOP HALF of viewport (main composer is high up)
+                    # If it's at the bottom, it's probably a comment field
+                    location = driver.execute_script("""
+                        const rect = arguments[0].getBoundingClientRect();
+                        return {top: rect.top, height: window.innerHeight};
+                    """, el)
+
+                    # Composer must be in top 60% of viewport
+                    if location['top'] > location['height'] * 0.6:
+                        logger.warning(f"⚠️ Element too low ({int(location['top'])}px) — likely a comment box, skipping")
+                        continue
+
+                    # Don't scrollIntoView — it might scroll to a comment box.
+                    # Just click via JS.
                     driver.execute_script("arguments[0].click();", el)
-                    logger.info(f"✅ Clicked placeholder via: {xpath[:60]}")
+                    logger.info(f"✅ Clicked main composer via: {xpath[:65]}")
                     placeholder_clicked = True
                     break
                 except Exception:
@@ -162,7 +184,7 @@ class PostingEngine:
 
             if not placeholder_clicked:
                 _screenshot("no_placeholder")
-                return (False, "Could not find 'Write something' placeholder")
+                return (False, "Could not find main composer (only comment boxes found)")
 
             # Wait for composer to open (dialog or expanded form)
             time.sleep(random.uniform(2.0, 3.0))
