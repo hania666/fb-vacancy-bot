@@ -830,6 +830,53 @@ def action_reset_daily_limit(account_id: int):
         return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
 
 
+@app.post("/actions/scrape-profile-groups")
+async def action_scrape_profile_groups(request: Request):
+    """
+    Scrape groups from another user's profile.
+    Body: {"profile_url": "https://...", "account_id": 1, "max_groups": 200}
+    Runs in background.
+    """
+    try:
+        body = await request.json()
+        profile_url = (body.get("profile_url") or "").strip()
+        account_id = int(body.get("account_id", 1))
+        max_groups = int(body.get("max_groups", 200))
+
+        if not profile_url or "facebook.com" not in profile_url:
+            return JSONResponse({"status": "error", "message": "Нужен валидный FB URL"}, status_code=400)
+
+        db = get_db()
+        account = db.query(Account).filter(Account.id == account_id).first()
+        db.close()
+        if not account or not account.ix_profile_id:
+            return JSONResponse({"status": "error", "message": "Аккаунт не найден или нет iXBrowser ID"}, status_code=400)
+
+        ix_profile = account.ix_profile_id
+
+        def run(**kwargs):
+            from core.group_collector import collect_groups_from_profile_url
+            result = collect_groups_from_profile_url(
+                profile_url=profile_url,
+                ix_profile_id=ix_profile,
+                max_groups=max_groups,
+            )
+            logger.info(f"📋 Scrape result: {result.get('status')} found={result.get('found',0)} new={result.get('new_added',0)}")
+
+        proc = pm.start(
+            description=f"🔍 Парсинг профиля → {profile_url[:40]}...",
+            target=run,
+        )
+        return JSONResponse({
+            "status": "started",
+            "message": f"Парсинг запущен в фоне. Жди в логах.",
+            "process_id": proc.id,
+        })
+    except Exception as e:
+        logger.error(f"scrape-profile-groups error: {e}")
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
+
 @app.get("/actions/clean-broken-groups")
 def action_clean_broken_groups():
     """Remove groups with malformed URLs from DB."""
