@@ -866,7 +866,19 @@ class PostingEngine:
             
             acc_name = account.name if account else f"ID:{account_id}"
             vac_title = vacancy.title if vacancy else f"ID:{vacancy_id}"
-            
+
+            # Skip non-ready accounts
+            if not account or account.status != "ready":
+                status = account.status if account else "missing"
+                logger.warning(f"⏭ Skipping '{acc_name}' (status: {status})")
+                all_results.append({
+                    "account_id": account_id,
+                    "account_name": acc_name,
+                    "vacancy_title": vac_title,
+                    "result": {"status": "skipped", "message": f"status={status}"},
+                })
+                continue
+
             logger.info(f"🚀 Account '{acc_name}' posting vacancy '{vac_title}'")
             
             result = self.run_posting_round(
@@ -1196,6 +1208,16 @@ class PostingEngine:
         if not vacancy:
             db.close()
             return {"status": "error", "message": "Vacancy not found or inactive"}
+
+        # Posting only allowed when account is explicitly marked READY
+        if account.status != "ready":
+            current = account.status
+            db.close()
+            return {
+                "status": "error",
+                "message": f"Account #{account_id} status='{current}'. "
+                           f"Set status to 'ready' before posting.",
+            }
 
         pid = profile_id or account.ix_profile_id
         db.close()
