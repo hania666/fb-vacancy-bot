@@ -117,10 +117,47 @@ class PostingEngine:
             if "login" in cur:
                 return (False, "Logout detected")
 
+            # ── Detect blockers BEFORE trying to post ──────────────────────
+            # Check for "Запит на участь" / "Membership request" popup
+            # — means we are NOT a member of this group
+            blocker_xpaths = [
+                "//div[@role='dialog']//*[contains(text(),'Запит на участь')]",
+                "//div[@role='dialog']//*[contains(text(),'Запрос на участие')]",
+                "//div[@role='dialog']//*[contains(text(),'Request to join')]",
+                "//div[@role='dialog']//*[contains(text(),'Membership request')]",
+                "//div[@role='dialog']//*[contains(text(),'Незабаром ви зможете')]",
+                "//div[@role='dialog']//*[contains(text(),'Скоро вы сможете')]",
+            ]
+            for bx in blocker_xpaths:
+                try:
+                    blocker = driver.find_element(By.XPATH, bx)
+                    if blocker:
+                        # Close popup so we don't leave it hanging in the next group
+                        try:
+                            close_btn = driver.find_element(By.XPATH,
+                                "//div[@role='dialog']//*[@aria-label='Закрити' or @aria-label='Close']")
+                            driver.execute_script("arguments[0].click();", close_btn)
+                            time.sleep(0.5)
+                        except Exception:
+                            pass
+                        logger.warning("⛔ Membership pending — not a full member yet")
+                        return (False, "Not a member: membership request pending")
+                except Exception:
+                    continue
+
             # Dismiss any popups (rules, cookie banners, etc.) — multi-step
             self._dismiss_popups(driver)
             time.sleep(0.5)
             self._dismiss_popups(driver)  # second pass for multi-step popups
+
+            # Re-check for blocker after popups (rules popup may hide membership question)
+            for bx in blocker_xpaths:
+                try:
+                    if driver.find_elements(By.XPATH, bx):
+                        logger.warning("⛔ Membership pending after dismiss")
+                        return (False, "Not a member: membership request pending")
+                except Exception:
+                    pass
 
             # ── STEP 2: Click the main "Напишіть щось..." composer ─────────
             # CRITICAL: must click the GROUP composer at the top, NOT a comment box
