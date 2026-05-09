@@ -782,6 +782,167 @@ def action_post_from_db(account_id: int, vacancy_id: int,
         return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
 
 
+@app.get("/actions/post-db-all/{vacancy_id}")
+def action_post_db_all(vacancy_id: int,
+                        delay_min: int = 30, delay_max: int = 60,
+                        between_accounts: int = 60):
+    """
+    Post vacancy to all DB groups from ALL ready accounts in sequence.
+    Each account posts to all groups it hasn't posted to yet.
+    """
+    try:
+        for p in pm.list_processes():
+            if "Рассылка с всех" in p.get("description", ""):
+                return JSONResponse({
+                    "status": "already_running",
+                    "message": "Массовая рассылка уже запущена!",
+                })
+
+        db = get_db()
+        ready_count = db.query(Account).filter(Account.status == "ready").count()
+        vacancy = db.query(Vacancy).filter(
+            Vacancy.id == vacancy_id, Vacancy.is_active == True,
+        ).first()
+        db.close()
+
+        if ready_count == 0:
+            return JSONResponse({"status": "error", "message": "Нет аккаунтов в статусе ready"}, status_code=400)
+        if not vacancy:
+            return JSONResponse({"status": "error", "message": "Вакансия не найдена"}, status_code=404)
+
+        def run(**kwargs):
+            engine = PostingEngine()
+            engine.run_posting_from_db_all_accounts(
+                vacancy_id=vacancy_id,
+                delay_min=delay_min,
+                delay_max=delay_max,
+                between_accounts_delay=between_accounts,
+                stop_flag=kwargs.get("stop_flag"),
+            )
+
+        proc = pm.start(
+            description=f"📨 Рассылка с всех ({ready_count} акк) → '{vacancy.title}'",
+            target=run,
+        )
+        return JSONResponse({
+            "status": "started",
+            "message": f"Запущена рассылка с {ready_count} аккаунтов",
+            "process_id": proc.id,
+        })
+    except Exception as e:
+        logger.error(f"post-db-all error: {e}")
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
+
+@app.get("/actions/join-groups/{account_id}")
+def action_join_groups(account_id: int, max_joins: int = 30,
+                        delay_min: int = 30, delay_max: int = 90):
+    """
+    Subscribe single account to all DB groups it isn't already in.
+    """
+    try:
+        for p in pm.list_processes():
+            if f"Подписка #{account_id}" in p.get("description", ""):
+                return JSONResponse({
+                    "status": "already_running",
+                    "message": f"Подписка акк #{account_id} уже идёт!",
+                })
+
+        db = get_db()
+        account = db.query(Account).filter(Account.id == account_id).first()
+        db.close()
+        if not account:
+            return JSONResponse({"status": "error", "message": "Аккаунт не найден"}, status_code=404)
+        if not account.ix_profile_id:
+            return JSONResponse({"status": "error", "message": "Нет iXBrowser ID"}, status_code=400)
+
+        def run(**kwargs):
+            engine = PostingEngine()
+            engine.join_all_db_groups_with_account(
+                account_id=account_id,
+                max_joins=max_joins,
+                delay_min=delay_min,
+                delay_max=delay_max,
+                stop_flag=kwargs.get("stop_flag"),
+            )
+
+        proc = pm.start(
+            description=f"📌 Подписка #{account_id} (макс {max_joins})",
+            target=run,
+        )
+        return JSONResponse({
+            "status": "started",
+            "message": f"Подписка запущена для акк #{account_id}, макс {max_joins} групп",
+            "process_id": proc.id,
+        })
+    except Exception as e:
+        logger.error(f"join-groups error: {e}")
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
+
+@app.get("/actions/join-groups-all")
+def action_join_groups_all(max_joins: int = 30,
+                            delay_min: int = 30, delay_max: int = 90,
+                            between_accounts: int = 120):
+    """
+    Subscribe ALL ready accounts to all DB groups (sequentially).
+    """
+    try:
+        for p in pm.list_processes():
+            if "Массовая подписка" in p.get("description", ""):
+                return JSONResponse({
+                    "status": "already_running",
+                    "message": "Массовая подписка уже запущена!",
+                })
+
+        db = get_db()
+        ready = db.query(Account).filter(Account.status == "ready").all()
+        ready_ids = [(a.id, a.login) for a in ready]
+        db.close()
+
+        if not ready_ids:
+            return JSONResponse({"status": "error", "message": "Нет аккаунтов в статусе ready"}, status_code=400)
+
+        import time
+        def run(**kwargs):
+            stop = kwargs.get("stop_flag")
+            engine = PostingEngine()
+            for idx, (acc_id, login) in enumerate(ready_ids):
+                if stop and stop.is_set():
+                    logger.info("⏹ Stop requested in mass-join")
+                    break
+                logger.info(f"━━━ Подписка ({idx+1}/{len(ready_ids)}) акк #{acc_id} '{login}' ━━━")
+                try:
+                    engine.join_all_db_groups_with_account(
+                        account_id=acc_id,
+                        max_joins=max_joins,
+                        delay_min=delay_min,
+                        delay_max=delay_max,
+                        stop_flag=stop,
+                    )
+                except Exception as e:
+                    logger.error(f"❌ Подписка акк #{acc_id} упала: {e}")
+                if idx < len(ready_ids) - 1 and not (stop and stop.is_set()):
+                    logger.info(f"⏳ Пауза {between_accounts}с перед следующим аккаунтом...")
+                    for _ in range(between_accounts):
+                        if stop and stop.is_set():
+                            break
+                        time.sleep(1)
+
+        proc = pm.start(
+            description=f"📌 Массовая подписка ({len(ready_ids)} акк × макс {max_joins})",
+            target=run,
+        )
+        return JSONResponse({
+            "status": "started",
+            "message": f"Запущена массовая подписка для {len(ready_ids)} аккаунтов",
+            "process_id": proc.id,
+        })
+    except Exception as e:
+        logger.error(f"join-groups-all error: {e}")
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
+
 @app.get("/actions/dedup-groups")
 def action_dedup_groups():
     """Remove duplicate groups from DB and normalise URLs"""
