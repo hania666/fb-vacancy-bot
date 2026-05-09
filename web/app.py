@@ -797,6 +797,65 @@ def action_dedup_groups():
         return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
 
 
+@app.get("/actions/reset-daily-limit/{account_id}")
+def action_reset_daily_limit(account_id: int):
+    """Reset today's posting count for an account (use carefully)."""
+    try:
+        from core.database import DailyLimit
+        from datetime import datetime
+        today = datetime.utcnow().date().isoformat()
+
+        db = get_db()
+        if account_id == 0:
+            # Reset for ALL accounts
+            limits = db.query(DailyLimit).filter(DailyLimit.date == today).all()
+            count = len(limits)
+            for lim in limits:
+                lim.posts_made = 0
+            db.commit()
+            db.close()
+            return JSONResponse({"status": "ok", "message": f"Reset daily limit for {count} accounts"})
+        else:
+            limit = db.query(DailyLimit).filter(
+                DailyLimit.account_id == account_id,
+                DailyLimit.date == today,
+            ).first()
+            if limit:
+                limit.posts_made = 0
+                db.commit()
+            db.close()
+            return JSONResponse({"status": "ok", "message": f"Daily limit reset for account #{account_id}"})
+    except Exception as e:
+        logger.error(f"Reset limit error: {e}")
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
+
+@app.get("/actions/clean-broken-groups")
+def action_clean_broken_groups():
+    """Remove groups with malformed URLs from DB."""
+    try:
+        import re
+        db = get_db()
+        all_groups = db.query(Group).all()
+        removed = 0
+        # Valid URL pattern: facebook.com/groups/{numeric_id_or_slug}/
+        valid_pattern = re.compile(
+            r'^https://(?:www\.)?facebook\.com/groups/[a-zA-Z0-9_.\-]+/?$'
+        )
+        for g in all_groups:
+            if not valid_pattern.match(g.url) or 'httpst' in g.url or g.url.count('/') > 5:
+                logger.info(f"🗑 Removing broken URL: {g.url}")
+                db.delete(g)
+                removed += 1
+        db.commit()
+        db.close()
+        return JSONResponse({"status": "ok", "removed": removed,
+                             "message": f"Removed {removed} broken group URLs"})
+    except Exception as e:
+        logger.error(f"Clean broken groups error: {e}")
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
+
 @app.get("/scheduler", response_class=HTMLResponse)
 def scheduler_page(request: Request):
     return templates.TemplateResponse("scheduler.html", {
