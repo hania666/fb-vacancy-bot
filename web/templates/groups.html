@@ -67,6 +67,13 @@
             </form>
         </div>
 
+        <div style="display:flex; gap:8px; flex-wrap:wrap; margin: 16px 0; align-items:center;">
+            <span class="text-muted">🛠 Очистка БД:</span>
+            <button onclick="dedupGroups()" class="btn btn-primary btn-sm" id="dedupBtn">🧹 Удалить дубли</button>
+            <button onclick="cleanBroken()" class="btn btn-primary btn-sm" id="cleanBtn">🗑 Удалить битые URL</button>
+            <span id="cleanStatus" style="color:#94a3b8; font-size:13px; margin-left:8px;"></span>
+        </div>
+
         <table>
             <thead>
                 <tr><th>ID</th><th>Название</th><th>Категория</th><th>Открытая</th><th>Постов</th><th>Последний пост</th></tr>
@@ -87,5 +94,55 @@
             </tbody>
         </table>
     </div>
+<script>
+async function dedupGroups() {
+    const btn = document.getElementById('dedupBtn');
+    const status = document.getElementById('cleanStatus');
+    btn.disabled = true; btn.textContent = '⏳ Чищу...';
+    status.textContent = '';
+    try {
+        const res = await fetch('/actions/dedup-groups');
+        const data = await res.json();
+        if (data.status === 'ok') {
+            status.textContent = `✅ ${data.message}`;
+            status.style.color = '#22c55e';
+            setTimeout(() => location.reload(), 1500);
+        } else {
+            status.textContent = `❌ ${data.message}`;
+            status.style.color = '#ef4444';
+        }
+    } catch (e) {
+        status.textContent = '❌ Ошибка соединения';
+        status.style.color = '#ef4444';
+    } finally {
+        btn.disabled = false; btn.textContent = '🧹 Удалить дубли';
+    }
+}
+
+async function cleanBroken() {
+    const btn = document.getElementById('cleanBtn');
+    const status = document.getElementById('cleanStatus');
+    if (!confirm('Удалить группы с битыми URL? Это нельзя отменить.')) return;
+    btn.disabled = true; btn.textContent = '⏳ Чищу...';
+    status.textContent = '';
+    try {
+        const res = await fetch('/actions/clean-broken-groups');
+        const data = await res.json();
+        if (data.status === 'ok') {
+            status.textContent = `✅ Удалено битых: ${data.removed}`;
+            status.style.color = '#22c55e';
+            setTimeout(() => location.reload(), 1500);
+        } else {
+            status.textContent = `❌ ${data.message}`;
+            status.style.color = '#ef4444';
+        }
+    } catch (e) {
+        status.textContent = '❌ Ошибка соединения';
+        status.style.color = '#ef4444';
+    } finally {
+        btn.disabled = false; btn.textContent = '🗑 Удалить битые URL';
+    }
+}
+</script>
 </body>
 </html>
