@@ -110,6 +110,8 @@
                 <button class="btn btn-success" onclick="promptPost()">📨 Рассылка (1 акк)</button>
                 <button class="btn btn-success" onclick="promptPostFromProfile()">📨 Из БД (1 акк)</button>
                 <button class="btn btn-success" onclick="promptPostAll()">📨 Рассылка (все акки)</button>
+                <button class="btn btn-success" onclick="promptPostDbAll()" style="background:#16a34a;">📨 Из БД (все акки)</button>
+                <button class="btn btn-success" onclick="promptJoinAll()" style="background:#a855f7;">📌 Подписаться на группы (все)</button>
                 <a href="/scheduler" class="btn btn-primary">⏰ Планировщик</a>
             </div>
             <div style="display: flex; gap: 12px; margin-top: 8px;">
@@ -196,6 +198,39 @@
         async function promptPostAll() {
             const vacId = prompt('ID вакансии:');
             if (vacId) runAction('/actions/post-all/' + vacId, 'Рассылка со всех акков...');
+        }
+
+        async function promptPostDbAll() {
+            const vacId = prompt('ID вакансии для рассылки со ВСЕХ ready аккаунтов:');
+            if (!vacId) return;
+            const resultDiv = document.getElementById('action-result');
+            resultDiv.style.display = 'block';
+            resultDiv.textContent = '🔄 Запуск массовой рассылки из БД...';
+            try {
+                const resp = await fetch('/actions/post-db-all/' + vacId);
+                const data = await resp.json();
+                resultDiv.textContent = (data.status === 'started' ? '✅ ' : '❌ ') + data.message;
+            } catch (e) {
+                resultDiv.textContent = '❌ ' + e.message;
+            }
+            refreshProcessStatus();
+        }
+
+        async function promptJoinAll() {
+            const max = prompt('Сколько групп подписать с каждого аккаунта? (макс)', '30');
+            if (!max) return;
+            if (!confirm(`Подписать ВСЕ ready аккаунты на группы из БД (макс ${max} с каждого)?`)) return;
+            const resultDiv = document.getElementById('action-result');
+            resultDiv.style.display = 'block';
+            resultDiv.textContent = '🔄 Запуск массовой подписки...';
+            try {
+                const resp = await fetch('/actions/join-groups-all?max_joins=' + parseInt(max));
+                const data = await resp.json();
+                resultDiv.textContent = (data.status === 'started' ? '✅ ' : '❌ ') + data.message;
+            } catch (e) {
+                resultDiv.textContent = '❌ ' + e.message;
+            }
+            refreshProcessStatus();
         }
         
         // Initial load
