@@ -157,28 +157,52 @@ class PostingEngine:
 
             for xpath in placeholder_xpaths:
                 try:
-                    el = WebDriverWait(driver, 3).until(
-                        EC.element_to_be_clickable((By.XPATH, xpath))
-                    )
-
-                    # Verify element is in TOP HALF of viewport (main composer is high up)
-                    # If it's at the bottom, it's probably a comment field
-                    location = driver.execute_script("""
-                        const rect = arguments[0].getBoundingClientRect();
-                        return {top: rect.top, height: window.innerHeight};
-                    """, el)
-
-                    # Composer must be in top 60% of viewport
-                    if location['top'] > location['height'] * 0.6:
-                        logger.warning(f"⚠️ Element too low ({int(location['top'])}px) — likely a comment box, skipping")
+                    elements = driver.find_elements(By.XPATH, xpath)
+                    if not elements:
                         continue
 
-                    # Don't scrollIntoView — it might scroll to a comment box.
-                    # Just click via JS.
-                    driver.execute_script("arguments[0].click();", el)
-                    logger.info(f"✅ Clicked main composer via: {xpath[:65]}")
-                    placeholder_clicked = True
-                    break
+                    # Check each match — pick the FIRST one that is NOT inside a post/article
+                    # (which would mean it's a comment field on someone else's post)
+                    for el in elements:
+                        try:
+                            # Verify element is not inside an existing post (article)
+                            # The main composer is NOT inside <div role='article'>
+                            is_in_article = driver.execute_script("""
+                                let node = arguments[0];
+                                while (node && node !== document.body) {
+                                    if (node.getAttribute && node.getAttribute('role') === 'article') {
+                                        return true;
+                                    }
+                                    node = node.parentElement;
+                                }
+                                return false;
+                            """, el)
+
+                            if is_in_article:
+                                logger.info(f"⚠️ Skipping match inside article (comment box)")
+                                continue
+
+                            # Verify element is visible
+                            is_visible = driver.execute_script("""
+                                const rect = arguments[0].getBoundingClientRect();
+                                return rect.width > 0 && rect.height > 0;
+                            """, el)
+
+                            if not is_visible:
+                                continue
+
+                            # Scroll element into view (it's safe now — we know it's NOT a comment)
+                            driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
+                            time.sleep(0.5)
+                            driver.execute_script("arguments[0].click();", el)
+                            logger.info(f"✅ Clicked main composer via: {xpath[:65]}")
+                            placeholder_clicked = True
+                            break
+                        except Exception:
+                            continue
+
+                    if placeholder_clicked:
+                        break
                 except Exception:
                     continue
 
