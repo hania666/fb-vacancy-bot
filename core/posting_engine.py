@@ -27,9 +27,9 @@ class PostingEngine:
     """Engine for posting vacancies to Facebook groups"""
     
     # Posting limits per account
-    MAX_POSTS_PER_DAY = 30          # Max posts per account per day
+    MAX_POSTS_PER_DAY = 60          # Max posts per account per day
     MIN_DELAY_BETWEEN_POSTS = 30    # Seconds
-    MAX_DELAY_BETWEEN_POSTS = 60    # Seconds (faster, riskier)
+    MAX_DELAY_BETWEEN_POSTS = 60    # Seconds
     POSTS_PER_BATCH = 10            # Posts before a longer break
     BATCH_BREAK_MIN = 300           # 5 min break between batches
     BATCH_BREAK_MAX = 600           # 10 min
